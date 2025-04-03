@@ -1,5 +1,5 @@
 name: syncable
-description: A starting point for Dart libraries or applications.
+description: Offline-first multi-device data synchronization for Flutter apps
 version: 1.0.0
 repository: https://github.com/Mr-Pepe/syncable
 
