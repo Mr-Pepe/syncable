@@ -1,0 +1,29 @@
+# https://dart.dev/tools/pub/automated-publishing#configuring-automated-publishing-from-github-actions-on-pubdev
+name: Publish to pub.dev
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+*"
+
+jobs:
+  publish:
+    permissions:
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+
+      - run: sudo snap install --edge --classic just
+
+      - run: just get-dependencies
+
+      - name: Bump version
+        run: |
+          dart pub global activate cider
+          dart pub global run cider version ${{  github.ref_name }}
+
+      - name: Publish
+        run: dart pub publish --force
