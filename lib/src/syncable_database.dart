@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 import 'package:syncable/src/syncable.dart';
 import 'package:syncable/src/syncable_table.dart';
 
+/// A mixin to enable synchronization with a backend via a [SyncManager].
 mixin SyncableDatabase on GeneratedDatabase {
   final Map<
       (
@@ -30,8 +31,11 @@ mixin SyncableDatabase on GeneratedDatabase {
   }
 
   /// Subscribes to [table] and listens for changes in it.
+  ///
   /// On each change, rows get filtered with [filter] and then passed to
   /// [onChange].
+  ///
+  /// The table for a syncable can be retrieved using [getTable].
   StreamSubscription<List<T>> subscribe<T extends Syncable>({
     required TableInfo<SyncableTable, T> table,
     required Expression<bool> Function(SyncableTable) filter,
@@ -52,6 +56,7 @@ mixin SyncableDatabase on GeneratedDatabase {
     });
   }
 
+  /// Retrieves the table for a specific syncable type [T].
   TableInfo<SyncableTable, T> getTable<T extends Syncable>() {
     return allTables.whereType<TableInfo<SyncableTable, T>>().first;
   }
