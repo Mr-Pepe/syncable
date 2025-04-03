@@ -59,8 +59,6 @@ class Item extends Equatable implements Syncable {
         id,
         userId,
         updatedAt,
-        deleted,
-        name,
       ];
 
   @override
