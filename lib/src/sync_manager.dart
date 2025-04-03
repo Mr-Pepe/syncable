@@ -25,9 +25,7 @@ class SyncManager<T extends SyncableDatabase> {
         assert(
           syncInterval.inMilliseconds > 0,
           'Sync interval must be positive',
-        ) {
-    _setUpLogger();
-  }
+        );
 
   final _logger = Logger('syncable');
 
@@ -232,15 +230,15 @@ class SyncManager<T extends SyncableDatabase> {
   void _maybeSubscribeToLocalChanges() {
     _clearLocalSubscriptions();
 
-    if (userId.isEmpty) {
-      _logger
-          .warning('Not subscribed to local changes because user ID is empty');
-      return;
-    }
-
     if (!_syncingEnabled) {
       _logger.warning('Not subscribed to local changes because syncing is '
           'disabled');
+      return;
+    }
+
+    if (userId.isEmpty) {
+      _logger
+          .warning('Not subscribed to local changes because user ID is empty');
       return;
     }
 
@@ -277,16 +275,27 @@ class SyncManager<T extends SyncableDatabase> {
   }
 
   void _maybeSubscribeToBackendChanges() {
-    if (!_syncingEnabled || !_otherDevicesActive()) {
+    final otherDevicesActive = _otherDevicesActive();
+
+    if (!_syncingEnabled || !otherDevicesActive) {
       if (_backendSubscription != null) {
         _backendSubscription?.unsubscribe();
         _backendSubscription = null;
       }
 
-      _logger.warning('Not subscribed to backend changes. '
-          'syncingEnabled=$__syncingEnabled '
-          'userId=$_userId '
-          'otherDevicesActive=${_otherDevicesActive()}');
+      String reason;
+
+      if (!__syncingEnabled) {
+        reason = 'syncing is disabled';
+      } else if (userId.isEmpty) {
+        reason = 'the user ID is empty';
+      } else if (!otherDevicesActive) {
+        reason = 'no other devices are active';
+      } else {
+        reason = '... good question. Please file an issue';
+      }
+
+      _logger.warning('Not subscribed to backend changes because $reason');
 
       return;
     }
@@ -342,13 +351,13 @@ class SyncManager<T extends SyncableDatabase> {
   }
 
   Future<void> _syncTables(String reason) async {
-    if (userId.isEmpty) {
-      _logger.warning('Tables not getting synced because user ID is empty');
+    if (!__syncingEnabled) {
+      _logger.warning('Tables not getting synced because syncing is disabled');
       return;
     }
 
-    if (!__syncingEnabled) {
-      _logger.warning('Tables not getting synced because syncing is disabled');
+    if (userId.isEmpty) {
+      _logger.warning('Tables not getting synced because user ID is empty');
       return;
     }
 
@@ -578,17 +587,6 @@ class SyncManager<T extends SyncableDatabase> {
     if (lastTimeOtherDeviceWasActive == null) return true;
     return DateTime.now().difference(lastTimeOtherDeviceWasActive!) <
         _devicesConsideredInactiveAfter;
-  }
-
-  void _setUpLogger() {
-    if (const bool.hasEnvironment('SYNCABLE_ENABLE_LOGGING')) {
-      // coverage:ignore-start
-      _logger.onRecord.listen((record) {
-        // ignore: avoid_print
-        print('${record.level.name}: ${record.time}: ${record.message}');
-      });
-      // coverage:ignore-end
-    }
   }
 }
 
