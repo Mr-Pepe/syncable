@@ -650,7 +650,7 @@ class SyncManager<T extends SyncableDatabase> {
     TimestampType type,
     Type syncable,
   ) {
-    return '${userId}_${type.name}_${_localTables[syncable]!.actualTableName}';
+    return 'syncable_${userId}_${type.name}_${_localTables[syncable]!.actualTableName}';
   }
 
   bool _otherDevicesActive() {
