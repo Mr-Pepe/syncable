@@ -17,7 +17,7 @@ generate-test-entrypoints:
   dart format test/_test.dart
 
 # Runs all tests (with coverage)
-test: generate-test-entrypoints
+test: generate-test-entrypoints start-supabase
   dart test test/_test.dart --test-randomize-ordering-seed=random --coverage coverage
   dart run coverage:format_coverage --lcov --report-on lib --check-ignore -i coverage/test/_test.dart.vm.json -o coverage/lcov.info
 

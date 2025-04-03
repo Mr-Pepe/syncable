@@ -1,0 +1,45 @@
+name: Run tests
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+  push:
+    branches:
+      - main
+      - ci
+  schedule:
+    - cron: "0 0 * * 0" # Run on Sundays
+
+concurrency:
+  group: ${{ github.repository }}-${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || ''}}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+
+      - uses: actions/setup-python@v5
+
+      - uses: supabase/setup-cli@v1
+
+      - run: sudo snap install --edge --classic just
+
+      - run: pip install sqlfluff
+
+      - run: just get-dependencies
+
+      - run: just lint
+
+      - run: just test
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
