@@ -1,5 +1,8 @@
 # Syncable
 
+[![Pub](https://img.shields.io/pub/v/syncable.svg)](https://pub.dev/packages/syncable)
+[![codecov](https://codecov.io/gh/Mr-Pepe/syncable/graph/badge.svg?token=BQQJDTOFZ0)](https://codecov.io/gh/Mr-Pepe/syncable)
+
 Syncable is a library for offline-first multi-device data synchronization in Flutter apps.
 
 It was initially developed for the [Chill Chinese app](https://chill-chinese.com/)
