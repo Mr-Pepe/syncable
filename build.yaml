@@ -1,0 +1,24 @@
+targets:
+  $default:
+    sources:
+      include:
+        - $package$
+        - pubspec.yaml
+        - lib/$lib$
+        - lib/**
+        - test/**
+    builders:
+      mockito|mockBuilder:
+        generate_for:
+          include:
+            - test/**
+      json_serializable:
+        options:
+          field_rename: snake
+      source_gen:combining_builder:
+        options:
+          preamble:
+            // coverage:ignore-file
+      drift_dev:
+        options:
+          store_date_time_values_as_text: true # Use ISO 8601 strings

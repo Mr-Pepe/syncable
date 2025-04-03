@@ -1,8 +1,5 @@
-/// Support for doing something awesome.
-///
-/// More dartdocs go here.
-library;
-
-export 'src/syncable_base.dart';
-
-// TODO: Export any libraries intended for clients of this package.
+export 'package:syncable/src/sync_manager.dart';
+export 'package:syncable/src/sync_timestamp_storage.dart';
+export 'package:syncable/src/syncable.dart';
+export 'package:syncable/src/syncable_database.dart';
+export 'package:syncable/src/syncable_table.dart';
