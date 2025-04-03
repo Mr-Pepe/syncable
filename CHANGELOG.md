@@ -1,3 +1,1 @@
-## 1.0.0
-
-- Initial version.
+See [GitHub releases](https://github.com/Mr-Pepe/syncable/releases).

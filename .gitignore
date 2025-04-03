@@ -8,5 +8,7 @@ pubspec.lock
 
 .vscode
 coverage/
+doc/
 
 test_database.sqlite
+_CHANGELOG.md
