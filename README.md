@@ -90,6 +90,25 @@ Check out [the example database](test/utils/test_database.dart) for a complete c
    alter publication supabase_realtime add table items;
    ```
 
+4. **(Optional) Enable Row-level security (RLS):**
+   Allow users to only create, read, update, and delete their own items.
+
+   ```sql
+   alter table items enable row level security;
+
+   create policy "Users can work with own data"  -- noqa
+   on public.items
+   for all
+   using (
+       (auth.uid() = user_id)
+   );
+   ```
+
+5. **(Optional) Write tests:**
+   Make sure that your tables behave as expected by writing tests for them.
+   To test the behavior we set up for syncing, check out the [database test](supabase/tests/database/items.test.sql).
+   It makes use of helper functions defined [here](supabase/tests/database/000-basejump-test-helpers.test.sql) and [here](supabase/tests/database/001-custom-test-helpers.test.sql) to create users and check the impact of RLS on them.
+
 ### Start synchronization 🔄
 
 1.  **Create a sync manager:**

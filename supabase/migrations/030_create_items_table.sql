@@ -14,3 +14,12 @@ for each row
 execute function discard_older_updates();
 
 alter publication supabase_realtime add table items;
+
+alter table items enable row level security;
+
+create policy "Users can work with own data"  -- noqa
+on public.items
+for all
+using (
+    (auth.uid() = user_id)
+);
