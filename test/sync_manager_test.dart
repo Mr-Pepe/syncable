@@ -36,7 +36,7 @@ void main() {
   late MockSupabaseQueryBuilder mockQueryBuilder;
   late MockClient mockHttpClient;
 
-  setUp(() async {
+  setUp(() {
     testDb = TestDatabase(
       drift.DatabaseConnection(
         drift_native.NativeDatabase.memory(),

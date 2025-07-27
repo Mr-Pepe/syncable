@@ -10,7 +10,7 @@ import 'utils/test_database.dart';
 void main() {
   late TestDatabase testDb;
 
-  setUp(() async {
+  setUp(() {
     testDb = TestDatabase(
       drift.DatabaseConnection(
         drift_native.NativeDatabase.memory(),

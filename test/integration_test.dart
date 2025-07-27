@@ -47,7 +47,7 @@ void main() {
     );
   });
 
-  tearDown(() async {
+  tearDown(() {
     syncManager.dispose();
   });
 
