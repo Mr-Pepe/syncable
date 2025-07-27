@@ -278,6 +278,7 @@ Available commit types can be found [in the changelog generator](tool/generate_c
 
 - Set the local main branch to the desired commit.
 - Push the main branch!
+- Wait for CI to finish
 - Run `dart run tool/generate_changelog.dart <lastVersion>` and prune output as desired.
 - Run `gh release create` or create a new release on GitHub.
 - Copy the changelog.
