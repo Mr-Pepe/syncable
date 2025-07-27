@@ -17,6 +17,11 @@ Future<QueryExecutor> getDatabaseExecutor() async {
 }
 
 void main() {
+  // Uncomment to enable logging
+  // Logger.root.onRecord.listen(
+  //   (event) => print(event),
+  // );
+
   late TestDatabase testDb;
   final supabaseClient = SupabaseClient(
     'http://127.0.0.1:54321',
