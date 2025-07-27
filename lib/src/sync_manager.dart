@@ -32,6 +32,10 @@ class SyncManager<T extends SyncableDatabase> {
   ///  - writing data received from the backend via a real-time subscription to
   ///    the local database.
   ///
+  /// The [maxRows] parameter specifies the maximum number of rows that can be
+  /// retrieved from the backend in one batch. Set this value to the one you
+  /// configured in your Supabase dashboard or `supabase/config.toml`.
+  ///
   /// The [syncTimestampStorage] parameter is optional and can be used to
   /// provide a custom implementation of [SyncTimestampStorage] for storing
   /// timestamps of the last sync operations. This can drastically reduce
@@ -49,11 +53,13 @@ class SyncManager<T extends SyncableDatabase> {
     required T localDatabase,
     required SupabaseClient supabaseClient,
     Duration syncInterval = const Duration(seconds: 1),
+    int maxRows = 1000,
     SyncTimestampStorage? syncTimestampStorage,
     Duration otherDevicesConsideredInactiveAfter = const Duration(minutes: 2),
   })  : _localDb = localDatabase,
         _supabaseClient = supabaseClient,
         _syncInterval = syncInterval,
+        _maxRows = maxRows,
         _syncTimestampStorage = syncTimestampStorage,
         _devicesConsideredInactiveAfter = otherDevicesConsideredInactiveAfter,
         assert(
@@ -67,6 +73,7 @@ class SyncManager<T extends SyncableDatabase> {
   final SupabaseClient _supabaseClient;
   final SyncTimestampStorage? _syncTimestampStorage;
   final Duration _syncInterval;
+  final int _maxRows;
   final Duration _devicesConsideredInactiveAfter;
 
   /// This is what gets set when [enableSync] gets called. Internally, whether
@@ -467,10 +474,7 @@ class SyncManager<T extends SyncableDatabase> {
     final localItemsUpdatedAt = {for (final i in localItems) i.id: i.updatedAt};
 
     assert(_userId.isNotEmpty);
-    final backendItems = await _supabaseClient
-        .from(_backendTables[syncable]!)
-        .select('$idKey,$updatedAtKey')
-        .eq(userIdKey, _userId);
+    final backendItems = await _fetchBackendItemMetadata(syncable);
 
     final itemsToPull =
         _getItemsToPullFromBackend(backendItems, localItemsUpdatedAt);
@@ -481,6 +485,7 @@ class SyncManager<T extends SyncableDatabase> {
       );
     }
 
+    // Use batches because all the UUIDs make the URI become too long otherwise.
     for (final batch in itemsToPull.slices(100)) {
       if (!_syncingEnabled) return;
       final pulledBatch = await _supabaseClient
@@ -510,6 +515,41 @@ class SyncManager<T extends SyncableDatabase> {
     }
 
     return false;
+  }
+
+  /// Retrieves the IDs and `lastUpdatedAt` timestamps for all rows of a
+  /// syncable in the backend. These can be used to determine which items need
+  /// to be synced from the backend.
+  Future<List<Map<String, dynamic>>> _fetchBackendItemMetadata(
+    Type syncable,
+  ) async {
+    final List<Map<String, dynamic>> backendItems = [];
+
+    int offset = 0;
+    bool hasMore = true;
+
+    while (hasMore && _syncingEnabled) {
+      final batch = await _supabaseClient
+          .from(_backendTables[syncable]!)
+          .select('$idKey,$updatedAtKey')
+          .eq(userIdKey, _userId)
+          .range(offset, offset + _maxRows - 1)
+          // Use consistent ordering to prevent duplicates
+          .order(idKey, ascending: true);
+
+      backendItems.addAll(batch);
+      hasMore = batch.length == _maxRows;
+      offset += _maxRows;
+
+      if (batch.isNotEmpty) {
+        _logger.info(
+          'Fetched batch of ${batch.length} metadata items for table '
+          "'${_backendTables[syncable]!}', total so far: ${backendItems.length}",
+        );
+      }
+    }
+
+    return backendItems;
   }
 
   Iterable<String> _getItemsToPullFromBackend(

@@ -207,6 +207,76 @@ void main() {
     });
   });
 
+  test('Reading from backend uses paging', () async {
+    // The maximum number of rows returned from a query in Supabase is limited,
+    // so syncing more items than that requires paging.
+
+    const maxRows = 1000; // Defined in `supabase/config.toml`
+
+    await supabaseClient.auth.signInAnonymously();
+
+    final userId = supabaseClient.auth.currentUser!.id;
+
+    syncManager.setUserId(userId);
+    syncManager.setLastTimeOtherDeviceWasActive(null);
+
+    final timestamp = DateTime.now().toUtc();
+
+    final items = [
+      for (final i in List.generate(maxRows + 1, (i) => i))
+        Item(
+          id: const Uuid().v4(),
+          userId: userId,
+          updatedAt: timestamp,
+          deleted: false,
+          name: i.toString(),
+        ),
+    ];
+
+    // Writing rows to the backend and then immediately enabling syncing can
+    // cause the sync manager to pick up updates via backend subscriptions.
+    // However, we want to test the case where there are already a lot of
+    // existing entries in the backend, so we create a separate subscription
+    // first, then write the items, and then wait for all Postgres change events
+    // to be sent, before we enable syncing.
+    int updatesReceived = 0;
+
+    supabaseClient
+        .channel('backend_changes')
+        .onPostgresChanges(
+          schema: publicSchema,
+          table: 'items',
+          event: PostgresChangeEvent.all,
+          callback: (p) => updatesReceived++,
+        )
+        .subscribe();
+
+    // Create new items in backend
+    await supabaseClient
+        .from(itemsTable)
+        .insert(items.map((item) => item.toJson()).toList());
+
+    // Wait for all Postgres changes to get processed
+    await waitForFunctionToPass(() async {
+      expect(updatesReceived, maxRows + 1);
+    });
+
+    syncManager.enableSync();
+
+    // Wait for items to sync to local database
+    await waitForFunctionToPass(
+      () async {
+        await testDb.select(testDb.items).get().then((localItems) {
+          expect(
+            localItems.map((i) => i.name),
+            equals(List.generate(maxRows + 1, (i) => i.toString()).toSet()),
+          );
+        });
+      },
+      timeout: const Duration(seconds: 30),
+    );
+  });
+
   test('Local database rejects items from backend with old modification dates',
       () async {
     await supabaseClient.auth.signInAnonymously();
