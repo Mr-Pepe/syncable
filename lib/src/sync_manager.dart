@@ -340,13 +340,14 @@ class SyncManager<T extends SyncableDatabase> {
     Iterable<Syncable> rows,
   ) {
     final outQueue = _outQueues[syncable]!;
+    final receivedItems = _receivedItems[syncable]!;
 
     bool updateHasNotBeenSentYet(Syncable row) =>
         row.updatedAt.isAfter(outQueue[row.id]?.updatedAt ?? DateTime(0)) &&
         row.updatedAt.isAfter(_lastPushedTimestamp(syncable) ?? DateTime(0));
 
     for (final row in rows
-        .where((r) => !_receivedItems[syncable]!.contains(r))
+        .where((r) => !receivedItems.contains(r))
         .where(updateHasNotBeenSentYet)) {
       outQueue[row.id] = row;
     }
@@ -611,40 +612,62 @@ class SyncManager<T extends SyncableDatabase> {
   Future<void> _processIncoming(Type syncable) async {
     final inQueue = _inQueues[syncable]!;
 
-    while (inQueue.isNotEmpty) {
-      final item = inQueue.elementAt(0);
-      inQueue.remove(item);
+    if (inQueue.isEmpty) return;
 
-      if (_sentItems[syncable]!.contains(item) ||
-          _receivedItems[syncable]!.contains(item)) {
-        // No need to process this item because it was either previously sent to
-        // the backend by us or we already received it from the backend before.
+    final sentItems = _sentItems[syncable]!;
+    final receivedItems = _receivedItems[syncable]!;
+
+    final itemsToWrite = <String, Syncable>{};
+
+    for (final item in inQueue) {
+      // Skip if already processed
+      if (sentItems.contains(item) || receivedItems.contains(item)) {
         continue;
       }
-
-      _logger.info('Processing incoming item: $item');
-
-      await _writeIncoming(syncable, item);
-
-      _receivedItems[syncable]!.add(item);
-      _nSyncedFromBackend[syncable] = nSyncedFromBackend(syncable) + 1;
+      itemsToWrite[item.id] = item;
     }
+
+    inQueue.clear();
+
+    await _batchWriteIncoming(syncable, itemsToWrite);
+
+    receivedItems.addAll(itemsToWrite.values);
+    _nSyncedFromBackend[syncable] =
+        nSyncedFromBackend(syncable) + itemsToWrite.length;
   }
 
-  Future<void> _writeIncoming(Type syncable, Syncable incoming) async {
-    final table = _localTables[syncable]!;
-    final newValues = incoming.toCompanion();
-    try {
-      await _localDb.into(table).insert(newValues);
-    } catch (_) {
-      final existingItem = await (_localDb.select(table)
-            ..where((tbl) => tbl.id.equals(incoming.id)))
-          .getSingle();
+  Future<void> _batchWriteIncoming<S extends Syncable>(
+    Type syncable,
+    Map<String, S> incomingItems,
+  ) async {
+    if (incomingItems.isEmpty) return;
 
-      if (incoming.updatedAt.isAfter(existingItem.updatedAt)) {
-        await _localDb.update(table).replace(newValues);
+    final table = _localTables[syncable]! as TableInfo<SyncableTable, S>;
+
+    final existingItems = await (_localDb.select(table)
+          ..where((tbl) => tbl.id.isIn(incomingItems.keys)))
+        .get()
+        .then(
+          (items) =>
+              Map.fromEntries(items.map((i) => MapEntry(i.id, i.updatedAt))),
+        );
+
+    final itemsToInsert = <UpdateCompanion<Syncable>>[];
+    final itemsToReplace = <UpdateCompanion<Syncable>>[];
+
+    for (final incomingItem in incomingItems.values) {
+      final existingUpdatedAt = existingItems[incomingItem.id];
+      if (existingUpdatedAt == null) {
+        itemsToInsert.add(incomingItem.toCompanion());
+      } else if (incomingItem.updatedAt.isAfter(existingUpdatedAt)) {
+        itemsToReplace.add(incomingItem.toCompanion());
       }
     }
+
+    await _localDb.batch((batch) {
+      batch.insertAll(table, itemsToInsert);
+      batch.replaceAll(table, itemsToReplace);
+    });
   }
 
   DateTime? _lastPushedTimestamp(Type syncable) {
