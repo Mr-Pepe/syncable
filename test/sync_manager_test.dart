@@ -49,10 +49,12 @@ void main() {
     mockQueryBuilder = MockSupabaseQueryBuilder();
     mockHttpClient = MockClient();
 
-    when(mockSupabaseClient.from(itemsTable))
-        .thenAnswer((_) => mockQueryBuilder);
-    when(mockQueryBuilder.upsert(any, onConflict: anyNamed('onConflict')))
-        .thenAnswer(
+    when(
+      mockSupabaseClient.from(itemsTable),
+    ).thenAnswer((_) => mockQueryBuilder);
+    when(
+      mockQueryBuilder.upsert(any, onConflict: anyNamed('onConflict')),
+    ).thenAnswer(
       (_) => PostgrestFilterBuilder(
         PostgrestBuilder(
           url: Uri(),
@@ -89,17 +91,9 @@ void main() {
         ),
       ),
     );
-    when(
-      mockHttpClient.get(
-        any,
-        headers: anyNamed('headers'),
-      ),
-    ).thenAnswer(
-      (_) async => Response(
-        jsonEncode([]),
-        200,
-        request: Request('GET', Uri()),
-      ),
+    when(mockHttpClient.get(any, headers: anyNamed('headers'))).thenAnswer(
+      (_) async =>
+          Response(jsonEncode([]), 200, request: Request('GET', Uri())),
     );
 
     // Set up mocks for Supabase to allow listening to changes in the database
@@ -113,8 +107,9 @@ void main() {
         callback: anyNamed('callback'),
       ),
     ).thenReturn(mockRealtimeChannel);
-    when(mockRealtimeChannel.subscribe())
-        .thenAnswer((_) => mockRealtimeChannel);
+    when(
+      mockRealtimeChannel.subscribe(),
+    ).thenAnswer((_) => mockRealtimeChannel);
   });
 
   tearDown(() async {
@@ -141,7 +136,9 @@ void main() {
 
     expect(syncManager.nSyncedToBackend(Item), 0);
 
-    final rowId = await testDb.into(testDb.items).insert(
+    final rowId = await testDb
+        .into(testDb.items)
+        .insert(
           ItemsCompanion(
             userId: drift.Value(userId),
             updatedAt: drift.Value(DateTime.now()),
@@ -150,215 +147,219 @@ void main() {
           ),
         );
 
-    final item = await (testDb.select(testDb.items)
-          ..where((tbl) => tbl.rowId.equals(rowId)))
-        .getSingle();
+    final item = await (testDb.select(
+      testDb.items,
+    )..where((tbl) => tbl.rowId.equals(rowId))).getSingle();
 
     await waitForFunctionToPass(() async {
       expect(syncManager.nSyncedToBackend(Item), 1);
     });
 
     verify(
-      mockQueryBuilder.upsert(
-        [item.toJson()],
-        onConflict: anyNamed('onConflict'),
-      ),
+      mockQueryBuilder.upsert([
+        item.toJson(),
+      ], onConflict: anyNamed('onConflict')),
     ).called(1);
   });
 
-  test('Only subscribes to backend changes if other devices are active',
-      () async {
-    final syncManager = SyncManager<TestDatabase>(
-      localDatabase: testDb,
-      supabaseClient: mockSupabaseClient,
-      syncInterval: const Duration(milliseconds: 1),
-      otherDevicesConsideredInactiveAfter: const Duration(seconds: 1),
-    );
+  test(
+    'Only subscribes to backend changes if other devices are active',
+    () async {
+      final syncManager = SyncManager<TestDatabase>(
+        localDatabase: testDb,
+        supabaseClient: mockSupabaseClient,
+        syncInterval: const Duration(milliseconds: 1),
+        otherDevicesConsideredInactiveAfter: const Duration(seconds: 1),
+      );
 
-    syncManager.registerSyncable<Item>(
-      backendTable: itemsTable,
-      fromJson: Item.fromJson,
-      companionConstructor: ItemsCompanion.new,
-    );
+      syncManager.registerSyncable<Item>(
+        backendTable: itemsTable,
+        fromJson: Item.fromJson,
+        companionConstructor: ItemsCompanion.new,
+      );
 
-    syncManager.setUserId(const Uuid().v4());
-    syncManager.enableSync();
+      syncManager.setUserId(const Uuid().v4());
+      syncManager.enableSync();
 
-    // Switch device presence back and forth to make sure that the subscription
-    // gets added and removed as a response
+      // Switch device presence back and forth to make sure that the subscription
+      // gets added and removed as a response
 
-    syncManager.setLastTimeOtherDeviceWasActive(DateTime.now().toUtc());
-    await waitForFunctionToPass(() async {
-      expect(syncManager.isSubscribedToBackend, isTrue);
-    });
+      syncManager.setLastTimeOtherDeviceWasActive(DateTime.now().toUtc());
+      await waitForFunctionToPass(() async {
+        expect(syncManager.isSubscribedToBackend, isTrue);
+      });
 
-    syncManager.setLastTimeOtherDeviceWasActive(
-      DateTime.now().subtract(const Duration(seconds: 2)).toUtc(),
-    );
-    await waitForFunctionToPass(() async {
-      expect(syncManager.isSubscribedToBackend, isFalse);
-    });
+      syncManager.setLastTimeOtherDeviceWasActive(
+        DateTime.now().subtract(const Duration(seconds: 2)).toUtc(),
+      );
+      await waitForFunctionToPass(() async {
+        expect(syncManager.isSubscribedToBackend, isFalse);
+      });
 
-    syncManager.setLastTimeOtherDeviceWasActive(null);
-    await waitForFunctionToPass(() async {
-      expect(syncManager.isSubscribedToBackend, isTrue);
-    });
+      syncManager.setLastTimeOtherDeviceWasActive(null);
+      await waitForFunctionToPass(() async {
+        expect(syncManager.isSubscribedToBackend, isTrue);
+      });
 
-    syncManager.setLastTimeOtherDeviceWasActive(
-      DateTime.now().subtract(const Duration(seconds: 2)).toUtc(),
-    );
-    await waitForFunctionToPass(() async {
-      expect(syncManager.isSubscribedToBackend, isFalse);
-    });
+      syncManager.setLastTimeOtherDeviceWasActive(
+        DateTime.now().subtract(const Duration(seconds: 2)).toUtc(),
+      );
+      await waitForFunctionToPass(() async {
+        expect(syncManager.isSubscribedToBackend, isFalse);
+      });
 
-    syncManager.setLastTimeOtherDeviceWasActive(DateTime.now().toUtc());
-    await waitForFunctionToPass(() async {
-      expect(syncManager.isSubscribedToBackend, isTrue);
-    });
-  });
+      syncManager.setLastTimeOtherDeviceWasActive(DateTime.now().toUtc());
+      await waitForFunctionToPass(() async {
+        expect(syncManager.isSubscribedToBackend, isTrue);
+      });
+    },
+  );
 
-  test('Skips explicit sync to backend if unnecessary due to sync timestamps',
-      () async {
-    final syncManager = SyncManager<TestDatabase>(
-      localDatabase: testDb,
-      supabaseClient: mockSupabaseClient,
-      syncInterval: const Duration(milliseconds: 1),
-      otherDevicesConsideredInactiveAfter: const Duration(seconds: 1),
-      syncTimestampStorage: TimestampStorage(),
-    );
+  test(
+    'Skips explicit sync to backend if unnecessary due to sync timestamps',
+    () async {
+      final syncManager = SyncManager<TestDatabase>(
+        localDatabase: testDb,
+        supabaseClient: mockSupabaseClient,
+        syncInterval: const Duration(milliseconds: 1),
+        otherDevicesConsideredInactiveAfter: const Duration(seconds: 1),
+        syncTimestampStorage: TimestampStorage(),
+      );
 
-    syncManager.registerSyncable<Item>(
-      backendTable: itemsTable,
-      fromJson: Item.fromJson,
-      companionConstructor: ItemsCompanion.new,
-    );
+      syncManager.registerSyncable<Item>(
+        backendTable: itemsTable,
+        fromJson: Item.fromJson,
+        companionConstructor: ItemsCompanion.new,
+      );
 
-    expect(syncManager.nSyncedFromBackend(Item), 0);
+      expect(syncManager.nSyncedFromBackend(Item), 0);
 
-    syncManager.setUserId(const Uuid().v4());
-    syncManager.enableSync();
+      syncManager.setUserId(const Uuid().v4());
+      syncManager.enableSync();
 
-    final itemRowId = await testDb.into(testDb.items).insert(
-          ItemsCompanion(
-            userId: drift.Value(syncManager.userId),
-            updatedAt: drift.Value(DateTime.now()),
-            deleted: const drift.Value(false),
-            name: const drift.Value('Local item 1'),
-          ),
-        );
+      final itemRowId = await testDb
+          .into(testDb.items)
+          .insert(
+            ItemsCompanion(
+              userId: drift.Value(syncManager.userId),
+              updatedAt: drift.Value(DateTime.now()),
+              deleted: const drift.Value(false),
+              name: const drift.Value('Local item 1'),
+            ),
+          );
 
-    await waitForFunctionToPass(() async {
-      expect(syncManager.nFullSyncs, 1);
+      await waitForFunctionToPass(() async {
+        expect(syncManager.nFullSyncs, 1);
+        expect(syncManager.nSyncedToBackend(Item), 1);
+      });
+
+      await syncManager.syncTables();
+
+      // Check that the item was not sent again despite explicit sync
+      expect(syncManager.nFullSyncs, 2);
+      expect(syncManager.isSyncingToBackend, isFalse);
       expect(syncManager.nSyncedToBackend(Item), 1);
-    });
 
-    await syncManager.syncTables();
+      // Update the item to trigger a sync
+      await (testDb.update(testDb.items)
+            ..where((i) => i.rowId.equals(itemRowId)))
+          .write(ItemsCompanion(updatedAt: drift.Value(DateTime.now())));
 
-    // Check that the item was not sent again despite explicit sync
-    expect(syncManager.nFullSyncs, 2);
-    expect(syncManager.isSyncingToBackend, isFalse);
-    expect(syncManager.nSyncedToBackend(Item), 1);
+      await waitForFunctionToPass(() async {
+        expect(syncManager.nSyncedToBackend(Item), 2);
+      });
+    },
+  );
 
-    // Update the item to trigger a sync
-    await (testDb.update(testDb.items)..where((i) => i.rowId.equals(itemRowId)))
-        .write(
-      ItemsCompanion(
-        updatedAt: drift.Value(DateTime.now()),
-      ),
-    );
+  test(
+    'Skips explicit sync from backend if unnecessary due to sync timestamps',
+    () async {
+      final syncManager = SyncManager<TestDatabase>(
+        localDatabase: testDb,
+        supabaseClient: mockSupabaseClient,
+        syncInterval: const Duration(milliseconds: 1),
+        otherDevicesConsideredInactiveAfter: const Duration(seconds: 1),
+        syncTimestampStorage: TimestampStorage(),
+      );
 
-    await waitForFunctionToPass(() async {
-      expect(syncManager.nSyncedToBackend(Item), 2);
-    });
-  });
+      syncManager.registerSyncable<Item>(
+        backendTable: itemsTable,
+        fromJson: Item.fromJson,
+        companionConstructor: ItemsCompanion.new,
+      );
 
-  test('Skips explicit sync from backend if unnecessary due to sync timestamps',
-      () async {
-    final syncManager = SyncManager<TestDatabase>(
-      localDatabase: testDb,
-      supabaseClient: mockSupabaseClient,
-      syncInterval: const Duration(milliseconds: 1),
-      otherDevicesConsideredInactiveAfter: const Duration(seconds: 1),
-      syncTimestampStorage: TimestampStorage(),
-    );
+      syncManager.setUserId(const Uuid().v4());
+      syncManager.enableSync();
 
-    syncManager.registerSyncable<Item>(
-      backendTable: itemsTable,
-      fromJson: Item.fromJson,
-      companionConstructor: ItemsCompanion.new,
-    );
+      expect(syncManager.nSyncedFromBackend(Item), 0);
 
-    syncManager.setUserId(const Uuid().v4());
-    syncManager.enableSync();
+      final backendItem1 = Item(
+        id: const Uuid().v4(),
+        userId: syncManager.userId,
+        updatedAt: DateTime.now(),
+        deleted: false,
+        name: 'Backend item 1',
+      );
 
-    expect(syncManager.nSyncedFromBackend(Item), 0);
+      when(mockHttpClient.get(any, headers: anyNamed('headers'))).thenAnswer(
+        (_) async => Response(
+          jsonEncode([backendItem1.toJson()]),
+          200,
+          request: Request('GET', Uri()),
+        ),
+      );
 
-    final backendItem1 = Item(
-      id: const Uuid().v4(),
-      userId: syncManager.userId,
-      updatedAt: DateTime.now(),
-      deleted: false,
-      name: 'Backend item 1',
-    );
+      await waitForFunctionToPass(() async {
+        expect(syncManager.nFullSyncs, 1);
+        expect(syncManager.nSyncedFromBackend(Item), 1);
+      });
 
-    when(mockHttpClient.get(any, headers: anyNamed('headers'))).thenAnswer(
-      (_) async => Response(
-        jsonEncode([backendItem1.toJson()]),
-        200,
-        request: Request('GET', Uri()),
-      ),
-    );
+      await syncManager.syncTables();
 
-    await waitForFunctionToPass(() async {
-      expect(syncManager.nFullSyncs, 1);
-      expect(syncManager.nSyncedFromBackend(Item), 1);
-    });
-
-    await syncManager.syncTables();
-
-    // Check that the item was pulled again despite explicit sync
-    expect(syncManager.nFullSyncs, 2);
-    expect(syncManager.isSyncingFromBackend, isFalse);
-    expect(syncManager.nSyncedFromBackend(Item), 1);
-
-    final backendItem2 = Item(
-      id: const Uuid().v4(),
-      userId: syncManager.userId,
-      updatedAt: DateTime.now(),
-      deleted: false,
-      name: 'Backend item 2',
-    );
-
-    when(mockHttpClient.get(any, headers: anyNamed('headers'))).thenAnswer(
-      (_) async => Response(
-        jsonEncode([backendItem1.toJson(), backendItem2.toJson()]),
-        200,
-        request: Request('GET', Uri()),
-      ),
-    );
-
-    // Setting a timestamp far in the past for the last time a device was active
-    // must prevent a new sync
-    syncManager.setLastTimeOtherDeviceWasActive(
-      DateTime.now().subtract(const Duration(days: 2)).toUtc(),
-    );
-
-    await waitForFunctionToPass(() async {
       // Check that the item was pulled again despite explicit sync
-      expect(syncManager.nFullSyncs, 3);
+      expect(syncManager.nFullSyncs, 2);
       expect(syncManager.isSyncingFromBackend, isFalse);
       expect(syncManager.nSyncedFromBackend(Item), 1);
-    });
 
-    // Setting a timestamp now for the last time a device was active
-    // must trigger a new sync
-    syncManager.setLastTimeOtherDeviceWasActive(DateTime.now().toUtc());
-    await waitForFunctionToPass(() async {
-      expect(syncManager.nFullSyncs, 4);
-      expect(syncManager.isSyncingFromBackend, isFalse);
-      expect(syncManager.nSyncedFromBackend(Item), 2);
-    });
-  });
+      final backendItem2 = Item(
+        id: const Uuid().v4(),
+        userId: syncManager.userId,
+        updatedAt: DateTime.now(),
+        deleted: false,
+        name: 'Backend item 2',
+      );
+
+      when(mockHttpClient.get(any, headers: anyNamed('headers'))).thenAnswer(
+        (_) async => Response(
+          jsonEncode([backendItem1.toJson(), backendItem2.toJson()]),
+          200,
+          request: Request('GET', Uri()),
+        ),
+      );
+
+      // Setting a timestamp far in the past for the last time a device was active
+      // must prevent a new sync
+      syncManager.setLastTimeOtherDeviceWasActive(
+        DateTime.now().subtract(const Duration(days: 2)).toUtc(),
+      );
+
+      await waitForFunctionToPass(() async {
+        // Check that the item was pulled again despite explicit sync
+        expect(syncManager.nFullSyncs, 3);
+        expect(syncManager.isSyncingFromBackend, isFalse);
+        expect(syncManager.nSyncedFromBackend(Item), 1);
+      });
+
+      // Setting a timestamp now for the last time a device was active
+      // must trigger a new sync
+      syncManager.setLastTimeOtherDeviceWasActive(DateTime.now().toUtc());
+      await waitForFunctionToPass(() async {
+        expect(syncManager.nFullSyncs, 4);
+        expect(syncManager.isSyncingFromBackend, isFalse);
+        expect(syncManager.nSyncedFromBackend(Item), 2);
+      });
+    },
+  );
 
   test('Items received from backend are not sent back', () async {
     final syncManager = SyncManager<TestDatabase>(
@@ -412,7 +413,9 @@ void main() {
       companionConstructor: ItemsCompanion.new,
     );
 
-    await testDb.into(testDb.items).insert(
+    await testDb
+        .into(testDb.items)
+        .insert(
           ItemsCompanion(
             updatedAt: drift.Value(DateTime.now()),
             name: const drift.Value('Test Item'),
@@ -435,33 +438,36 @@ void main() {
   });
 
   test(
-      'Trying to fill missing user IDs without first setting a user ID does not crash',
-      () async {
-    final syncManager = SyncManager<TestDatabase>(
-      localDatabase: testDb,
-      supabaseClient: mockSupabaseClient,
-      syncInterval: const Duration(milliseconds: 1),
-    );
+    'Trying to fill missing user IDs without first setting a user ID does not crash',
+    () async {
+      final syncManager = SyncManager<TestDatabase>(
+        localDatabase: testDb,
+        supabaseClient: mockSupabaseClient,
+        syncInterval: const Duration(milliseconds: 1),
+      );
 
-    syncManager.registerSyncable<Item>(
-      backendTable: itemsTable,
-      fromJson: Item.fromJson,
-      companionConstructor: ItemsCompanion.new,
-    );
+      syncManager.registerSyncable<Item>(
+        backendTable: itemsTable,
+        fromJson: Item.fromJson,
+        companionConstructor: ItemsCompanion.new,
+      );
 
-    await testDb.into(testDb.items).insert(
-          ItemsCompanion(
-            updatedAt: drift.Value(DateTime.now()),
-            name: const drift.Value('Test Item'),
-          ),
-        );
+      await testDb
+          .into(testDb.items)
+          .insert(
+            ItemsCompanion(
+              updatedAt: drift.Value(DateTime.now()),
+              name: const drift.Value('Test Item'),
+            ),
+          );
 
-    expect((await testDb.select(testDb.items).getSingle()).userId, isNull);
+      expect((await testDb.select(testDb.items).getSingle()).userId, isNull);
 
-    await syncManager.fillMissingUserIdForLocalTables();
+      await syncManager.fillMissingUserIdForLocalTables();
 
-    expect((await testDb.select(testDb.items).getSingle()).userId, isNull);
-  });
+      expect((await testDb.select(testDb.items).getSingle()).userId, isNull);
+    },
+  );
 
   test('Enabling syncing without registering syncables raises exception', () {
     final syncManager = SyncManager<TestDatabase>(
@@ -470,10 +476,7 @@ void main() {
       syncInterval: const Duration(milliseconds: 1),
     );
 
-    expect(
-      () => syncManager.enableSync(),
-      throwsException,
-    );
+    expect(() => syncManager.enableSync(), throwsException);
   });
 
   test('Registering syncable without generic parameter raises exception', () {

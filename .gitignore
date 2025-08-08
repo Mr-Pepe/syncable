@@ -10,6 +10,7 @@ pubspec.lock
 coverage/
 doc/
 build/
+test/_test.dart
 
 test_database.sqlite
 _CHANGELOG.md

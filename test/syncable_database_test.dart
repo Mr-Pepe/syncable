@@ -26,7 +26,9 @@ void main() {
   test('Get item from database', () async {
     final itemId = const Uuid().v4();
 
-    await testDb.into(testDb.items).insert(
+    await testDb
+        .into(testDb.items)
+        .insert(
           ItemsCompanion(
             id: drift.Value(itemId),
             updatedAt: drift.Value(DateTime.now()),
@@ -41,7 +43,9 @@ void main() {
   });
 
   test('Clear database', () async {
-    await testDb.into(testDb.items).insert(
+    await testDb
+        .into(testDb.items)
+        .insert(
           ItemsCompanion(
             id: drift.Value(const Uuid().v4()),
             updatedAt: drift.Value(DateTime.now()),
@@ -69,7 +73,9 @@ void main() {
 
     final itemId1 = const Uuid().v4();
 
-    await testDb.into(testDb.items).insert(
+    await testDb
+        .into(testDb.items)
+        .insert(
           ItemsCompanion(
             id: drift.Value(itemId1),
             updatedAt: drift.Value(DateTime.now()),
@@ -85,7 +91,9 @@ void main() {
 
     final itemId2 = const Uuid().v4();
 
-    await testDb.into(testDb.items).insert(
+    await testDb
+        .into(testDb.items)
+        .insert(
           ItemsCompanion(
             id: drift.Value(itemId2),
             updatedAt: drift.Value(DateTime.now()),

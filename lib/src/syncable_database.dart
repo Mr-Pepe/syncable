@@ -7,11 +7,13 @@ import 'package:syncable/src/syncable_table.dart';
 /// A mixin to enable synchronization with a backend via a [SyncManager].
 mixin SyncableDatabase on GeneratedDatabase {
   final Map<
-      (
-        TableInfo<SyncableTable, Syncable>,
-        Expression<bool> Function(SyncableTable)
-      ),
-      Stream<List<Syncable>>> _queryStreams = {};
+    (
+      TableInfo<SyncableTable, Syncable>,
+      Expression<bool> Function(SyncableTable),
+    ),
+    Stream<List<Syncable>>
+  >
+  _queryStreams = {};
 
   /// Retrieves a single item by its [id] from the local database [table].
   Future<T> getItem<T extends Syncable>(

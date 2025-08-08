@@ -69,7 +69,9 @@ void main() {
     syncManager.setUserId(userId);
     syncManager.enableSync();
 
-    await testDb.into(testDb.items).insert(
+    await testDb
+        .into(testDb.items)
+        .insert(
           ItemsCompanion(
             userId: Value(userId),
             updatedAt: Value(DateTime.now().toUtc()),
@@ -117,7 +119,9 @@ void main() {
     final currentTimestamp = DateTime.now().toUtc();
     final futureTimestamp = currentTimestamp.add(const Duration(hours: 1));
 
-    await testDb.into(testDb.items).insert(
+    await testDb
+        .into(testDb.items)
+        .insert(
           ItemsCompanion(
             userId: Value(userId),
             updatedAt: Value(currentTimestamp),
@@ -129,21 +133,20 @@ void main() {
 
     await waitForFunctionToPass(() async {
       expect(syncManager.nSyncedToBackend(Item), 1);
-      expect(
-        await _getBackendItems(supabaseClient, userId),
-        hasLength(1),
-      );
+      expect(await _getBackendItems(supabaseClient, userId), hasLength(1));
     });
 
     // Update the item in the backend with a timestamp that is in the future
-    await supabaseClient.from(itemsTable).update({
-      nameKey: 'c',
-      updatedAtKey: futureTimestamp.toIso8601String(),
-    }).eq(idKey, localItem.id);
+    await supabaseClient
+        .from(itemsTable)
+        .update({nameKey: 'c', updatedAtKey: futureTimestamp.toIso8601String()})
+        .eq(idKey, localItem.id);
 
     await waitForFunctionToPass(() async {
-      final Item backendItem =
-          (await _getBackendItems(supabaseClient, userId)).first;
+      final Item backendItem = (await _getBackendItems(
+        supabaseClient,
+        userId,
+      )).first;
 
       expect(backendItem.name, 'c');
       expect(backendItem.updatedAt, futureTimestamp);
@@ -151,8 +154,9 @@ void main() {
 
     // Update the local item with a timestamp that is in the future but before
     // the one in the backend
-    await (testDb.update(testDb.items)..where((i) => i.id.equals(localItem.id)))
-        .write(
+    await (testDb.update(
+      testDb.items,
+    )..where((i) => i.id.equals(localItem.id))).write(
       ItemsCompanion(
         updatedAt: Value(currentTimestamp.add(const Duration(minutes: 30))),
         name: const Value('b'),
@@ -201,10 +205,13 @@ void main() {
     expect(syncManager.isSubscribedToBackend, isTrue);
 
     // Update item in backend
-    await supabaseClient.from(itemsTable).update({
-      nameKey: 'b',
-      updatedAtKey: DateTime.now().toUtc().toIso8601String(),
-    }).eq(idKey, item.id);
+    await supabaseClient
+        .from(itemsTable)
+        .update({
+          nameKey: 'b',
+          updatedAtKey: DateTime.now().toUtc().toIso8601String(),
+        })
+        .eq(idKey, item.id);
 
     // Wait for item to sync to local database
     await waitForFunctionToPass(() async {
@@ -269,87 +276,90 @@ void main() {
     syncManager.enableSync();
 
     // Wait for items to sync to local database
-    await waitForFunctionToPass(
-      () async {
-        await testDb.select(testDb.items).get().then((localItems) {
-          expect(
-            localItems.map((i) => i.name),
-            equals(List.generate(maxRows + 1, (i) => i.toString()).toSet()),
-          );
-        });
-      },
-      timeout: const Duration(seconds: 30),
-    );
+    await waitForFunctionToPass(() async {
+      await testDb.select(testDb.items).get().then((localItems) {
+        expect(
+          localItems.map((i) => i.name),
+          equals(List.generate(maxRows + 1, (i) => i.toString()).toSet()),
+        );
+      });
+    }, timeout: const Duration(seconds: 30));
   });
 
-  test('Local database rejects items from backend with old modification dates',
-      () async {
-    await supabaseClient.auth.signInAnonymously();
+  test(
+    'Local database rejects items from backend with old modification dates',
+    () async {
+      await supabaseClient.auth.signInAnonymously();
 
-    final userId = supabaseClient.auth.currentUser!.id;
+      final userId = supabaseClient.auth.currentUser!.id;
 
-    syncManager.setUserId(userId);
-    syncManager.enableSync();
+      syncManager.setUserId(userId);
+      syncManager.enableSync();
 
-    final timestamp = DateTime.now().toUtc();
+      final timestamp = DateTime.now().toUtc();
 
-    final item = Item(
-      id: const Uuid().v4(),
-      userId: userId,
-      updatedAt: timestamp,
-      deleted: false,
-      name: 'a',
-    );
+      final item = Item(
+        id: const Uuid().v4(),
+        userId: userId,
+        updatedAt: timestamp,
+        deleted: false,
+        name: 'a',
+      );
 
-    // Create new item in backend
-    await supabaseClient.from(itemsTable).insert(item.toJson());
+      // Create new item in backend
+      await supabaseClient.from(itemsTable).insert(item.toJson());
 
-    // Wait for item to sync to local database
-    await waitForFunctionToPass(() async {
-      expect((await testDb.getItem(testDb.items, item.id)).name, 'a');
-    });
+      // Wait for item to sync to local database
+      await waitForFunctionToPass(() async {
+        expect((await testDb.getItem(testDb.items, item.id)).name, 'a');
+      });
 
-    // Disable sync, so that we can change the local item without syncing
-    // it to the backend
-    syncManager.disableSync();
+      // Disable sync, so that we can change the local item without syncing
+      // it to the backend
+      syncManager.disableSync();
 
-    // Update item in local database
-    await (testDb.update(testDb.items)..where((i) => i.id.equals(item.id)))
-        .write(
-      ItemsCompanion(
-        updatedAt: Value(timestamp.add(const Duration(hours: 1))),
-        name: const Value('b'),
-      ),
-    );
+      // Update item in local database
+      await (testDb.update(
+        testDb.items,
+      )..where((i) => i.id.equals(item.id))).write(
+        ItemsCompanion(
+          updatedAt: Value(timestamp.add(const Duration(hours: 1))),
+          name: const Value('b'),
+        ),
+      );
 
-    // Update item in backend, but with a timestamp that is older than the
-    // local item's modification date
-    final newTimestamp = timestamp.add(const Duration(minutes: 30));
+      // Update item in backend, but with a timestamp that is older than the
+      // local item's modification date
+      final newTimestamp = timestamp.add(const Duration(minutes: 30));
 
-    await supabaseClient.from(itemsTable).update({
-      nameKey: 'c',
-      updatedAtKey: newTimestamp.toIso8601String(),
-    }).eq(idKey, item.id);
+      await supabaseClient
+          .from(itemsTable)
+          .update({nameKey: 'c', updatedAtKey: newTimestamp.toIso8601String()})
+          .eq(idKey, item.id);
 
-    await waitForFunctionToPass(() async {
-      expect((await _getBackendItems(supabaseClient, userId)).first.name, 'c');
-    });
+      await waitForFunctionToPass(() async {
+        expect(
+          (await _getBackendItems(supabaseClient, userId)).first.name,
+          'c',
+        );
+      });
 
-    expect(syncManager.nFullSyncs, 1);
+      expect(syncManager.nFullSyncs, 1);
 
-    // Enable sync again
-    syncManager.enableSync();
+      // Enable sync again
+      syncManager.enableSync();
 
-    // Wait for local to process the change
-    await waitForFunctionToPass(() async {
-      expect(syncManager.nFullSyncs, 2);
-    });
+      // Wait for local to process the change
+      await waitForFunctionToPass(() async {
+        expect(syncManager.nFullSyncs, 2);
+      });
 
-    await Future.delayed(const Duration(milliseconds: 100));
+      await Future.delayed(const Duration(milliseconds: 100));
 
-    // Check that the local item was not updated
-    expect((await testDb.select(testDb.items).getSingle()).name, 'b');
-  });
+      // Check that the local item was not updated
+      expect((await testDb.select(testDb.items).getSingle()).name, 'b');
+    },
+  );
 
   test('All items get synced to backend after setting their user ID', () async {
     await supabaseClient.auth.signInAnonymously();
@@ -360,7 +370,9 @@ void main() {
     syncManager.enableSync();
 
     // Create local item without user ID
-    await testDb.into(testDb.items).insert(
+    await testDb
+        .into(testDb.items)
+        .insert(
           ItemsCompanion(
             userId: const Value(null),
             updatedAt: Value(DateTime.now().toUtc()),
@@ -385,8 +397,10 @@ Future<List<Item>> _getBackendItems(
   SupabaseClient supabaseClient,
   String userId,
 ) async {
-  final response =
-      await supabaseClient.from(itemsTable).select().eq(userIdKey, userId);
+  final response = await supabaseClient
+      .from(itemsTable)
+      .select()
+      .eq(userIdKey, userId);
 
   return (response as List)
       .map((item) => Item.fromJson(item as Map<String, dynamic>))

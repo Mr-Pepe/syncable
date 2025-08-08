@@ -55,11 +55,7 @@ class Item extends Equatable implements Syncable {
   final String name;
 
   @override
-  List<Object?> get props => [
-        id,
-        userId,
-        updatedAt,
-      ];
+  List<Object?> get props => [id, userId, updatedAt];
 
   @override
   bool get stringify => true;
@@ -70,11 +66,12 @@ class Item extends Equatable implements Syncable {
   @override
   UpdateCompanion<Item> toCompanion() {
     return ItemsCompanion.insert(
-      id: Value(id),
-      updatedAt: updatedAt,
-      userId: Value(userId),
-      deleted: Value(deleted),
-      name: name,
-    ) as UpdateCompanion<Item>;
+          id: Value(id),
+          updatedAt: updatedAt,
+          userId: Value(userId),
+          deleted: Value(deleted),
+          name: name,
+        )
+        as UpdateCompanion<Item>;
   }
 }

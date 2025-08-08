@@ -56,16 +56,16 @@ class SyncManager<T extends SyncableDatabase> {
     int maxRows = 1000,
     SyncTimestampStorage? syncTimestampStorage,
     Duration otherDevicesConsideredInactiveAfter = const Duration(minutes: 2),
-  })  : _localDb = localDatabase,
-        _supabaseClient = supabaseClient,
-        _syncInterval = syncInterval,
-        _maxRows = maxRows,
-        _syncTimestampStorage = syncTimestampStorage,
-        _devicesConsideredInactiveAfter = otherDevicesConsideredInactiveAfter,
-        assert(
-          syncInterval.inMilliseconds > 0,
-          'Sync interval must be positive',
-        );
+  }) : _localDb = localDatabase,
+       _supabaseClient = supabaseClient,
+       _syncInterval = syncInterval,
+       _maxRows = maxRows,
+       _syncTimestampStorage = syncTimestampStorage,
+       _devicesConsideredInactiveAfter = otherDevicesConsideredInactiveAfter,
+       assert(
+         syncInterval.inMilliseconds > 0,
+         'Sync interval must be positive',
+       );
 
   final _logger = Logger('syncable');
 
@@ -280,8 +280,9 @@ class SyncManager<T extends SyncableDatabase> {
   /// syncing to be enabled via [enableSync]).
   Future<void> fillMissingUserIdForLocalTables() async {
     if (userId.isEmpty) {
-      _logger.warning('Not setting user ID for local tables because user ID is '
-          'empty');
+      _logger.warning(
+        'Not setting user ID for local tables because user ID is empty',
+      );
       return;
     }
 
@@ -292,8 +293,9 @@ class SyncManager<T extends SyncableDatabase> {
 
     await _localDb.transaction(() async {
       for (int i = 0; i < tables.length; i++) {
-        await (_localDb.update(tables[i])..where((row) => row.userId.isNull()))
-            .write(companions[i]);
+        await (_localDb.update(
+          tables[i],
+        )..where((row) => row.userId.isNull())).write(companions[i]);
       }
     });
   }
@@ -309,14 +311,16 @@ class SyncManager<T extends SyncableDatabase> {
     _clearLocalSubscriptions();
 
     if (!_syncingEnabled) {
-      _logger.warning('Not subscribed to local changes because syncing is '
-          'disabled');
+      _logger.warning(
+        'Not subscribed to local changes because syncing is disabled',
+      );
       return;
     }
 
     if (userId.isEmpty) {
-      _logger
-          .warning('Not subscribed to local changes because user ID is empty');
+      _logger.warning(
+        'Not subscribed to local changes because user ID is empty',
+      );
       return;
     }
 
@@ -335,10 +339,7 @@ class SyncManager<T extends SyncableDatabase> {
     _logger.info('Subscribed to local changes');
   }
 
-  void _pushLocalChangesToOutQueue(
-    Type syncable,
-    Iterable<Syncable> rows,
-  ) {
+  void _pushLocalChangesToOutQueue(Type syncable, Iterable<Syncable> rows) {
     final outQueue = _outQueues[syncable]!;
     final receivedItems = _receivedItems[syncable]!;
 
@@ -346,9 +347,10 @@ class SyncManager<T extends SyncableDatabase> {
         row.updatedAt.isAfter(outQueue[row.id]?.updatedAt ?? DateTime(0)) &&
         row.updatedAt.isAfter(_lastPushedTimestamp(syncable) ?? DateTime(0));
 
-    for (final row in rows
-        .where((r) => !receivedItems.contains(r))
-        .where(updateHasNotBeenSentYet)) {
+    for (final row
+        in rows
+            .where((r) => !receivedItems.contains(r))
+            .where(updateHasNotBeenSentYet)) {
       outQueue[row.id] = row;
     }
   }
@@ -405,15 +407,13 @@ class SyncManager<T extends SyncableDatabase> {
       );
     }
 
-    _backendSubscription?.subscribe(
-      (status, error) {
-        if (error != null) {
-          // coverage:ignore-start
-          _logger.severe('Backend subscription error: $error');
-          // coverage:ignore-end
-        }
-      },
-    );
+    _backendSubscription?.subscribe((status, error) {
+      if (error != null) {
+        // coverage:ignore-start
+        _logger.severe('Backend subscription error: $error');
+        // coverage:ignore-end
+      }
+    });
 
     _logger.info('Subscribed to backend changes');
   }
@@ -477,8 +477,10 @@ class SyncManager<T extends SyncableDatabase> {
     assert(_userId.isNotEmpty);
     final backendItems = await _fetchBackendItemMetadata(syncable);
 
-    final itemsToPull =
-        _getItemsToPullFromBackend(backendItems, localItemsUpdatedAt);
+    final itemsToPull = _getItemsToPullFromBackend(
+      backendItems,
+      localItemsUpdatedAt,
+    );
 
     if (itemsToPull.isNotEmpty) {
       _logger.info(
@@ -590,7 +592,9 @@ class SyncManager<T extends SyncableDatabase> {
 
       assert(!outgoing.any((s) => s.userId?.isEmpty ?? true));
 
-      await _supabaseClient.from(backendTable).upsert(
+      await _supabaseClient
+          .from(backendTable)
+          .upsert(
             outgoing.map((x) => x.toJson()).toList(),
             onConflict: '$idKey,$userIdKey',
           );
@@ -644,10 +648,10 @@ class SyncManager<T extends SyncableDatabase> {
 
     final table = _localTables[syncable]! as TableInfo<SyncableTable, S>;
 
-    final existingItems = await (_localDb.select(table)
-          ..where((tbl) => tbl.id.isIn(incomingItems.keys)))
-        .get()
-        .then(
+    final existingItems =
+        await (_localDb.select(
+          table,
+        )..where((tbl) => tbl.id.isIn(incomingItems.keys))).get().then(
           (items) =>
               Map.fromEntries(items.map((i) => MapEntry(i.id, i.updatedAt))),
         );
@@ -709,10 +713,7 @@ class SyncManager<T extends SyncableDatabase> {
     _localSubscriptions.clear();
   }
 
-  String _keyForPersistentStorage(
-    TimestampType type,
-    Type syncable,
-  ) {
+  String _keyForPersistentStorage(TimestampType type, Type syncable) {
     return 'syncable_${userId}_${type.name}_${_localTables[syncable]!.actualTableName}';
   }
 
@@ -725,18 +726,18 @@ class SyncManager<T extends SyncableDatabase> {
   }
 }
 
-typedef CompanionConstructor = Object Function({
-  Value<int> rowid,
-  Value<String> id,
-  Value<String?> userId,
-  Value<DateTime> updatedAt,
-  Value<bool> deleted,
-});
+typedef CompanionConstructor =
+    Object Function({
+      Value<int> rowid,
+      Value<String> id,
+      Value<String?> userId,
+      Value<DateTime> updatedAt,
+      Value<bool> deleted,
+    });
 
 enum TimestampType {
   lastSyncFromBackend('lastSyncFromBackend'),
-  lastSyncToBackend('lastSyncToBackend'),
-  ;
+  lastSyncToBackend('lastSyncToBackend');
 
   const TimestampType(this.name);
   final String name;

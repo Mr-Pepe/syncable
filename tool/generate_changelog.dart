@@ -17,22 +17,22 @@ const types = {
 
 Future<void> main(List<String> arguments) async {
   if (arguments.length != 1) {
-    print(
-      'Usage: dart run tool/changelog_generator.dart <lastVersion>',
-    );
+    print('Usage: dart run tool/changelog_generator.dart <lastVersion>');
     exit(1);
   }
 
   final oldVersion = arguments[0];
 
   // Get the list of commits from git
-  final result = await Process.run(
-    'git',
-    ['log', '--pretty=format:"%s"', '$oldVersion..HEAD'],
-  );
+  final result = await Process.run('git', [
+    'log',
+    '--pretty=format:"%s"',
+    '$oldVersion..HEAD',
+  ]);
 
-  final categorizedCommits =
-      processCommits((result.stdout as String).split('\n'));
+  final categorizedCommits = processCommits(
+    (result.stdout as String).split('\n'),
+  );
 
   final String changelogContent = generateMarkdownChangelog(categorizedCommits);
 

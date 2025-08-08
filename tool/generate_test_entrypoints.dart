@@ -29,9 +29,7 @@ void generateTestEntrypoint(String folder) {
   final testFiles = Directory(folder)
       .listSync()
       .map((f) => f.path.replaceAll(r'\', '/').replaceFirst('$folder/', ''))
-      .where(
-        (f) => f.endsWith('_test.dart') && f != '_test.dart',
-      )
+      .where((f) => f.endsWith('_test.dart') && f != '_test.dart')
       .sorted()
       .toList();
 
@@ -57,31 +55,28 @@ void generateTestEntrypoint(String folder) {
   entryPoint.writeln('void main() {');
 
   if (measureExecutionTimes) {
-    entryPoint.writeAll(
-      [
-        '  // Collect test execution times',
-        'final testTimes = <String, Duration>{};',
-        '',
-        'setUp(() {',
-        '  final stopwatch = Stopwatch()..start();',
-        '  addTearDown(() {',
-        '    testTimes[Invoker.current!.liveTest.test.name] = stopwatch.elapsed;',
-        '  });',
-        '});',
-        '',
-        'tearDownAll(() {',
-        '  final sortedTestTimes = testTimes.entries.toList()',
-        '    ..sort((a, b) => b.value.compareTo(a.value));',
-        '',
-        '  for (final entry in sortedTestTimes) {',
-        '    if (entry.value.inMilliseconds > 100) {',
-        r"      print('${entry.value.inMilliseconds}ms: ${entry.key}');",
-        '    }',
-        '  }',
-        '});',
-      ],
-      '\n',
-    );
+    entryPoint.writeAll([
+      '  // Collect test execution times',
+      'final testTimes = <String, Duration>{};',
+      '',
+      'setUp(() {',
+      '  final stopwatch = Stopwatch()..start();',
+      '  addTearDown(() {',
+      '    testTimes[Invoker.current!.liveTest.test.name] = stopwatch.elapsed;',
+      '  });',
+      '});',
+      '',
+      'tearDownAll(() {',
+      '  final sortedTestTimes = testTimes.entries.toList()',
+      '    ..sort((a, b) => b.value.compareTo(a.value));',
+      '',
+      '  for (final entry in sortedTestTimes) {',
+      '    if (entry.value.inMilliseconds > 100) {',
+      r"      print('${entry.value.inMilliseconds}ms: ${entry.key}');",
+      '    }',
+      '  }',
+      '});',
+    ], '\n');
   }
 
   for (final file in testFiles) {
