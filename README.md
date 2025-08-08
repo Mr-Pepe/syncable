@@ -34,6 +34,14 @@ Check out [the example database](test/utils/test_database.dart) for a complete c
    - Have a `toCompanion` method that creates a Drift `UpdateCompanion` to write to the local database.
    - Be equatable.
 
+   > ℹ️ If you are using [freezed](https://pub.dev/packages/freezed), make sure to keep the `@JsonSerializable()` annotation, like:
+   >
+   > ```dart
+   > @freezed
+   > @JsonSerializable()
+   > class Item with _$Item implements Syncable {}
+   > ```
+
 2. **Define a syncable table:**
    Syncable items must be stored within a Drift `Table` that implements `SyncableTable`.
 
