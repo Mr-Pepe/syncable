@@ -125,7 +125,7 @@ class $ItemsTable extends Items with TableInfo<$ItemsTable, Item> {
   @override
   Item map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return Item(
+    return Item.new(
       id: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}id'],
