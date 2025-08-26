@@ -125,6 +125,8 @@ Check out [the example database](test/utils/test_database.dart) for a complete c
     final syncManager = SyncManager(
       localDatabase: localDatabase,
       supabaseClient: supabaseClient,
+      onSyncStarted: (event) => showLoadingIndicator(),
+      onSyncCompleted: (event) => hideLoadingIndicator(),
     );
     ```
 
@@ -189,6 +191,19 @@ Once the user signs in, call `fillMissingUserIdForLocalTables`.
 It goes through the local tables for all registered syncables and sets the user
 ID for all items that don't have a user ID yet.
 If syncing is enabled, those items will then get synced to the backend automatically.
+
+### Sync Event Notifications 📢
+
+Add optional callbacks to be notified when synchronization starts or completes:
+
+```dart
+final syncManager = SyncManager(
+  localDatabase: localDatabase,
+  supabaseClient: supabaseClient,
+  onSyncStarted: (event) => showLoadingIndicator(),
+  onSyncCompleted: (event) => hideLoadingIndicator(),
+);
+```
 
 ### Optimizations ⚡
 

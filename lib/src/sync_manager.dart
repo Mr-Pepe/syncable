@@ -5,6 +5,7 @@ import 'package:drift/drift.dart';
 import 'package:logging/logging.dart';
 import 'package:supabase/supabase.dart';
 import 'package:syncable/src/supabase_names.dart';
+import 'package:syncable/src/sync_event.dart';
 import 'package:syncable/src/sync_timestamp_storage.dart';
 import 'package:syncable/src/syncable.dart';
 import 'package:syncable/src/syncable_database.dart';
@@ -49,6 +50,11 @@ class SyncManager<T extends SyncableDatabase> {
   /// in combination with [lastTimeOtherDeviceWasActive] to determine whether
   /// other devices are currently active or not. A real-time subscription to
   /// the backend is only created if other devices are considered active.
+  ///
+  /// The [onSyncStarted] and [onSyncCompleted] parameters
+  /// are optional callback functions that will be called when sync events occur.
+  /// These callbacks allow your application to respond to synchronization events,
+  /// such as showing loading indicators when sync starts and completes.
   SyncManager({
     required T localDatabase,
     required SupabaseClient supabaseClient,
@@ -56,12 +62,16 @@ class SyncManager<T extends SyncableDatabase> {
     int maxRows = 1000,
     SyncTimestampStorage? syncTimestampStorage,
     Duration otherDevicesConsideredInactiveAfter = const Duration(minutes: 2),
+    SyncStartedEventCallback? onSyncStarted,
+    SyncCompletedEventCallback? onSyncCompleted,
   }) : _localDb = localDatabase,
        _supabaseClient = supabaseClient,
        _syncInterval = syncInterval,
        _maxRows = maxRows,
        _syncTimestampStorage = syncTimestampStorage,
        _devicesConsideredInactiveAfter = otherDevicesConsideredInactiveAfter,
+       _onSyncStarted = onSyncStarted,
+       _onSyncCompleted = onSyncCompleted,
        assert(
          syncInterval.inMilliseconds > 0,
          'Sync interval must be positive',
@@ -75,6 +85,10 @@ class SyncManager<T extends SyncableDatabase> {
   final Duration _syncInterval;
   final int _maxRows;
   final Duration _devicesConsideredInactiveAfter;
+
+  // Callback functions for sync events
+  final SyncStartedEventCallback? _onSyncStarted;
+  final SyncCompletedEventCallback? _onSyncCompleted;
 
   /// This is what gets set when [enableSync] gets called. Internally, whether
   /// the syncing is enabled or not is determined by [_syncingEnabled].
@@ -160,6 +174,9 @@ class SyncManager<T extends SyncableDatabase> {
   final Map<Type, Set<Syncable>> _inQueues = {};
   final Map<Type, Map<String, Syncable>> _outQueues = {};
 
+  // Track sync source for incoming items
+  final Map<Type, Map<String, SyncEventSource>> _incomingSources = {};
+
   final Map<Type, Set<Syncable>> _sentItems = {};
   final Map<Type, Set<Syncable>> _receivedItems = {};
 
@@ -230,6 +247,7 @@ class SyncManager<T extends SyncableDatabase> {
     _companions[S] = companionConstructor;
     _inQueues[S] = {};
     _outQueues[S] = {};
+    _incomingSources[S] = {};
     _sentItems[S] = {};
     _receivedItems[S] = {};
   }
@@ -397,6 +415,7 @@ class SyncManager<T extends SyncableDatabase> {
           if (p.newRecord.isNotEmpty) {
             final item = _fromJsons[syncable]!(p.newRecord);
             _inQueues[syncable]!.add(item);
+            _incomingSources[syncable]![item.id] = SyncEventSource.realtime;
           }
         },
         filter: PostgresChangeFilter(
@@ -443,8 +462,47 @@ class SyncManager<T extends SyncableDatabase> {
 
     _logger.info('Syncing all tables. Reason: $reason');
 
+    // Emit sync started events
+    for (final syncable in _syncables) {
+      if (_onSyncStarted != null) {
+        final event = SyncStartedEvent(
+          syncableType: syncable,
+          source: SyncEventSource.fullSync,
+          timestamp: DateTime.now().toUtc(),
+          reason: reason,
+        );
+        _onSyncStarted(event);
+      }
+    }
+
+    // Track initial queue sizes to detect if items were added during sync
+    final initialQueueSizes = <Type, int>{};
+    for (final syncable in _syncables) {
+      initialQueueSizes[syncable] = _inQueues[syncable]!.length;
+    }
+
     for (final syncable in _syncables) {
       await _syncTable(syncable);
+    }
+
+    // Emit fallback sync completed events for tables that didn't get any new items
+    // Real events with statistics are emitted in _processIncoming
+    for (final syncable in _syncables) {
+      final initialSize = initialQueueSizes[syncable]!;
+      final currentSize = _inQueues[syncable]!.length;
+
+      // Only emit fallback event if no items were added during sync
+      if (currentSize == initialSize && _onSyncCompleted != null) {
+        final event = SyncCompletedEvent(
+          syncableType: syncable,
+          source: SyncEventSource.fullSync,
+          timestamp: DateTime.now().toUtc(),
+          itemsReceived: 0,
+          itemsUpdated: 0,
+          itemsDeleted: 0,
+        );
+        _onSyncCompleted(event);
+      }
     }
 
     _nFullSyncs++;
@@ -499,6 +557,10 @@ class SyncManager<T extends SyncableDatabase> {
           .then((data) => data.map(_fromJsons[syncable]!));
 
       _inQueues[syncable]!.addAll(pulledBatch);
+      // Mark these as full sync items
+      for (final item in pulledBatch) {
+        _incomingSources[syncable]![item.id] = SyncEventSource.fullSync;
+      }
     }
 
     _updateLastPulledTimeStamp(syncable, DateTime.now().toUtc());
@@ -620,8 +682,10 @@ class SyncManager<T extends SyncableDatabase> {
 
     final sentItems = _sentItems[syncable]!;
     final receivedItems = _receivedItems[syncable]!;
+    final incomingSources = _incomingSources[syncable]!;
 
     final itemsToWrite = <String, Syncable>{};
+    var syncSource = SyncEventSource.fullSync; // Default
 
     for (final item in inQueue) {
       // Skip if already processed
@@ -629,22 +693,49 @@ class SyncManager<T extends SyncableDatabase> {
         continue;
       }
       itemsToWrite[item.id] = item;
+
+      // Use the first item's source as the batch source
+      if (itemsToWrite.length == 1) {
+        syncSource = incomingSources[item.id] ?? SyncEventSource.fullSync;
+      }
     }
 
     inQueue.clear();
 
-    await _batchWriteIncoming(syncable, itemsToWrite);
+    // Clean up source tracking for processed items
+    for (final itemId in itemsToWrite.keys) {
+      incomingSources.remove(itemId);
+    }
 
-    receivedItems.addAll(itemsToWrite.values);
-    _nSyncedFromBackend[syncable] =
-        nSyncedFromBackend(syncable) + itemsToWrite.length;
+    if (itemsToWrite.isNotEmpty) {
+      final writeStats = await _batchWriteIncoming(syncable, itemsToWrite);
+
+      receivedItems.addAll(itemsToWrite.values);
+      _nSyncedFromBackend[syncable] =
+          nSyncedFromBackend(syncable) + itemsToWrite.length;
+
+      // Emit sync completed event with real statistics
+      if (_onSyncCompleted != null) {
+        final event = SyncCompletedEvent(
+          syncableType: syncable,
+          source: syncSource,
+          timestamp: DateTime.now().toUtc(),
+          itemsReceived: writeStats.itemsInserted,
+          itemsUpdated: writeStats.itemsUpdated,
+          itemsDeleted: 0, // Not implemented yet
+        );
+        _onSyncCompleted(event);
+      }
+    }
   }
 
-  Future<void> _batchWriteIncoming<S extends Syncable>(
+  Future<WriteStats> _batchWriteIncoming<S extends Syncable>(
     Type syncable,
     Map<String, S> incomingItems,
   ) async {
-    if (incomingItems.isEmpty) return;
+    if (incomingItems.isEmpty) {
+      return const WriteStats(itemsInserted: 0, itemsUpdated: 0);
+    }
 
     final table = _localTables[syncable]! as TableInfo<SyncableTable, S>;
 
@@ -672,6 +763,11 @@ class SyncManager<T extends SyncableDatabase> {
       batch.insertAll(table, itemsToInsert);
       batch.replaceAll(table, itemsToReplace);
     });
+
+    return WriteStats(
+      itemsInserted: itemsToInsert.length,
+      itemsUpdated: itemsToReplace.length,
+    );
   }
 
   DateTime? _lastPushedTimestamp(Type syncable) {
@@ -724,6 +820,30 @@ class SyncManager<T extends SyncableDatabase> {
     return DateTime.now().difference(lastTimeOtherDeviceWasActive!) <
         _devicesConsideredInactiveAfter;
   }
+
+  /// Clears all internal sync state collections to ensure a clean sync state.
+  ///
+  /// This should be called during user authentication changes to prevent
+  /// newly synchronized items from being treated as "already processed"
+  /// due to persistent state from previous sync sessions.
+  void clearSyncState() {
+    _logger.info('Clearing sync state collections for clean authentication');
+
+    // Clear tracking collections for all syncable types
+    for (final syncable in _syncables) {
+      _inQueues[syncable]?.clear();
+      _outQueues[syncable]?.clear();
+      _incomingSources[syncable]?.clear();
+      _sentItems[syncable]?.clear();
+      _receivedItems[syncable]?.clear();
+    }
+
+    // Reset sync counters
+    _nSyncedToBackend.clear();
+    _nSyncedFromBackend.clear();
+
+    _logger.info('Sync state cleared successfully');
+  }
 }
 
 typedef CompanionConstructor =
@@ -741,4 +861,12 @@ enum TimestampType {
 
   const TimestampType(this.name);
   final String name;
+}
+
+/// Statistics returned by batch write operations.
+class WriteStats {
+  const WriteStats({required this.itemsInserted, required this.itemsUpdated});
+
+  final int itemsInserted;
+  final int itemsUpdated;
 }
