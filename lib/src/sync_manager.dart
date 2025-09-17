@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:collection/collection.dart';
 import 'package:drift/drift.dart';
+import 'package:flutter/foundation.dart';
 import 'package:logging/logging.dart';
 import 'package:supabase/supabase.dart';
 import 'package:syncable/src/supabase_names.dart';
@@ -20,7 +21,10 @@ import 'package:syncable/src/syncable_table.dart';
 ///
 /// The [SyncManager] is designed to be used with the [SyncableDatabase]
 /// class, which provides the local database functionality.
-class SyncManager<T extends SyncableDatabase> {
+///
+/// The [SyncManager] extends [ChangeNotifier] to provide a simple way to listen
+/// for sync state changes via the [syncInProgress] property.
+class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
   /// Creates a new [SyncManager] instance.
   ///
   /// The [localDatabase] parameter is required and must be an instance of
@@ -51,10 +55,13 @@ class SyncManager<T extends SyncableDatabase> {
   /// other devices are currently active or not. A real-time subscription to
   /// the backend is only created if other devices are considered active.
   ///
-  /// The [onSyncStarted] and [onSyncCompleted] parameters
-  /// are optional callback functions that will be called when sync events occur.
-  /// These callbacks allow your application to respond to synchronization events,
-  /// such as showing loading indicators when sync starts and completes.
+  /// For simple use cases, you can listen to sync state changes using the
+  /// [syncInProgress] property and [ChangeNotifier] interface.
+  ///
+  /// For advanced use cases, set [enableDetailedEvents] to `true` and provide
+  /// [onSyncStarted] and [onSyncCompleted] callbacks. These will be called when
+  /// sync events occur, allowing your application to respond to detailed
+  /// synchronization events per syncable type.
   SyncManager({
     required T localDatabase,
     required SupabaseClient supabaseClient,
@@ -62,6 +69,7 @@ class SyncManager<T extends SyncableDatabase> {
     int maxRows = 1000,
     SyncTimestampStorage? syncTimestampStorage,
     Duration otherDevicesConsideredInactiveAfter = const Duration(minutes: 2),
+    bool enableDetailedEvents = false,
     SyncStartedEventCallback? onSyncStarted,
     SyncCompletedEventCallback? onSyncCompleted,
   }) : _localDb = localDatabase,
@@ -70,8 +78,9 @@ class SyncManager<T extends SyncableDatabase> {
        _maxRows = maxRows,
        _syncTimestampStorage = syncTimestampStorage,
        _devicesConsideredInactiveAfter = otherDevicesConsideredInactiveAfter,
-       _onSyncStarted = onSyncStarted,
-       _onSyncCompleted = onSyncCompleted,
+       _enableDetailedEvents = enableDetailedEvents,
+       _onSyncStarted = enableDetailedEvents ? onSyncStarted : null,
+       _onSyncCompleted = enableDetailedEvents ? onSyncCompleted : null,
        assert(
          syncInterval.inMilliseconds > 0,
          'Sync interval must be positive',
@@ -86,6 +95,9 @@ class SyncManager<T extends SyncableDatabase> {
   final int _maxRows;
   final Duration _devicesConsideredInactiveAfter;
 
+  // Enable detailed events (disabled by default for simplicity)
+  final bool _enableDetailedEvents;
+
   // Callback functions for sync events
   final SyncStartedEventCallback? _onSyncStarted;
   final SyncCompletedEventCallback? _onSyncCompleted;
@@ -96,6 +108,23 @@ class SyncManager<T extends SyncableDatabase> {
   bool get syncingEnabled => __syncingEnabled;
   bool get _syncingEnabled =>
       __syncingEnabled && !_disposed && userId.isNotEmpty;
+
+  /// Whether a sync is currently in progress.
+  ///
+  /// This is a simple boolean that tracks if any sync operation is currently
+  /// running. Use this with [ChangeNotifier] to listen for sync state changes.
+  /// For more granular sync events per syncable type, set [enableDetailedEvents]
+  /// to `true` and use the callback functions.
+  bool _syncInProgress = false;
+  bool get syncInProgress => _syncInProgress;
+
+  /// Sets the sync in progress state and notifies listeners.
+  void _setSyncInProgress(bool inProgress) {
+    if (_syncInProgress != inProgress) {
+      _syncInProgress = inProgress;
+      notifyListeners();
+    }
+  }
 
   /// Enables syncing for all registered syncables.
   ///
@@ -198,12 +227,14 @@ class SyncManager<T extends SyncableDatabase> {
   int _nFullSyncs = 0;
   int get nFullSyncs => _nFullSyncs;
 
+  @override
   void dispose() {
     _disposed = true;
     for (final subscription in _localSubscriptions.values) {
       subscription.cancel();
     }
     _backendSubscription?.unsubscribe();
+    super.dispose();
   }
 
   /// Registers a syncable table with the sync manager.
@@ -415,7 +446,9 @@ class SyncManager<T extends SyncableDatabase> {
           if (p.newRecord.isNotEmpty) {
             final item = _fromJsons[syncable]!(p.newRecord);
             _inQueues[syncable]!.add(item);
-            _incomingSources[syncable]![item.id] = SyncEventSource.realtime;
+            if (_enableDetailedEvents) {
+              _incomingSources[syncable]![item.id] = SyncEventSource.realtime;
+            }
           }
         },
         filter: PostgresChangeFilter(
@@ -462,50 +495,62 @@ class SyncManager<T extends SyncableDatabase> {
 
     _logger.info('Syncing all tables. Reason: $reason');
 
-    // Emit sync started events
-    for (final syncable in _syncables) {
-      if (_onSyncStarted != null) {
-        final event = SyncStartedEvent(
-          syncableType: syncable,
-          source: SyncEventSource.fullSync,
-          timestamp: DateTime.now().toUtc(),
-          reason: reason,
-        );
-        _onSyncStarted(event);
+    // Set sync in progress and notify listeners
+    _setSyncInProgress(true);
+
+    try {
+      // Emit sync started events (only if detailed events are enabled)
+      if (_enableDetailedEvents) {
+        for (final syncable in _syncables) {
+          if (_onSyncStarted != null) {
+            final event = SyncStartedEvent(
+              syncableType: syncable,
+              source: SyncEventSource.fullSync,
+              timestamp: DateTime.now().toUtc(),
+              reason: reason,
+            );
+            _onSyncStarted(event);
+          }
+        }
       }
-    }
 
-    // Track initial queue sizes to detect if items were added during sync
-    final initialQueueSizes = <Type, int>{};
-    for (final syncable in _syncables) {
-      initialQueueSizes[syncable] = _inQueues[syncable]!.length;
-    }
-
-    for (final syncable in _syncables) {
-      await _syncTable(syncable);
-    }
-
-    // Emit fallback sync completed events for tables that didn't get any new items
-    // Real events with statistics are emitted in _processIncoming
-    for (final syncable in _syncables) {
-      final initialSize = initialQueueSizes[syncable]!;
-      final currentSize = _inQueues[syncable]!.length;
-
-      // Only emit fallback event if no items were added during sync
-      if (currentSize == initialSize && _onSyncCompleted != null) {
-        final event = SyncCompletedEvent(
-          syncableType: syncable,
-          source: SyncEventSource.fullSync,
-          timestamp: DateTime.now().toUtc(),
-          itemsReceived: 0,
-          itemsUpdated: 0,
-          itemsDeleted: 0,
-        );
-        _onSyncCompleted(event);
+      // Track initial queue sizes to detect if items were added during sync
+      final initialQueueSizes = <Type, int>{};
+      for (final syncable in _syncables) {
+        initialQueueSizes[syncable] = _inQueues[syncable]!.length;
       }
-    }
 
-    _nFullSyncs++;
+      for (final syncable in _syncables) {
+        await _syncTable(syncable);
+      }
+
+      // Emit fallback sync completed events for tables that didn't get any new items
+      // Real events with statistics are emitted in _processIncoming
+      if (_enableDetailedEvents) {
+        for (final syncable in _syncables) {
+          final initialSize = initialQueueSizes[syncable]!;
+          final currentSize = _inQueues[syncable]!.length;
+
+          // Only emit fallback event if no items were added during sync
+          if (currentSize == initialSize && _onSyncCompleted != null) {
+            final event = SyncCompletedEvent(
+              syncableType: syncable,
+              source: SyncEventSource.fullSync,
+              timestamp: DateTime.now().toUtc(),
+              itemsReceived: 0,
+              itemsUpdated: 0,
+              itemsDeleted: 0,
+            );
+            _onSyncCompleted(event);
+          }
+        }
+      }
+
+      _nFullSyncs++;
+    } finally {
+      // Clear sync in progress and notify listeners
+      _setSyncInProgress(false);
+    }
   }
 
   Future<void> _syncTable(Type syncable) async {
@@ -557,9 +602,11 @@ class SyncManager<T extends SyncableDatabase> {
           .then((data) => data.map(_fromJsons[syncable]!));
 
       _inQueues[syncable]!.addAll(pulledBatch);
-      // Mark these as full sync items
-      for (final item in pulledBatch) {
-        _incomingSources[syncable]![item.id] = SyncEventSource.fullSync;
+      // Mark these as full sync items (only if detailed events are enabled)
+      if (_enableDetailedEvents) {
+        for (final item in pulledBatch) {
+          _incomingSources[syncable]![item.id] = SyncEventSource.fullSync;
+        }
       }
     }
 
@@ -682,7 +729,6 @@ class SyncManager<T extends SyncableDatabase> {
 
     final sentItems = _sentItems[syncable]!;
     final receivedItems = _receivedItems[syncable]!;
-    final incomingSources = _incomingSources[syncable]!;
 
     final itemsToWrite = <String, Syncable>{};
     var syncSource = SyncEventSource.fullSync; // Default
@@ -694,17 +740,21 @@ class SyncManager<T extends SyncableDatabase> {
       }
       itemsToWrite[item.id] = item;
 
-      // Use the first item's source as the batch source
-      if (itemsToWrite.length == 1) {
+      // Use the first item's source as the batch source (only if detailed events are enabled)
+      if (_enableDetailedEvents && itemsToWrite.length == 1) {
+        final incomingSources = _incomingSources[syncable]!;
         syncSource = incomingSources[item.id] ?? SyncEventSource.fullSync;
       }
     }
 
     inQueue.clear();
 
-    // Clean up source tracking for processed items
-    for (final itemId in itemsToWrite.keys) {
-      incomingSources.remove(itemId);
+    // Clean up source tracking for processed items (only if detailed events are enabled)
+    if (_enableDetailedEvents) {
+      final incomingSources = _incomingSources[syncable]!;
+      for (final itemId in itemsToWrite.keys) {
+        incomingSources.remove(itemId);
+      }
     }
 
     if (itemsToWrite.isNotEmpty) {
@@ -714,8 +764,8 @@ class SyncManager<T extends SyncableDatabase> {
       _nSyncedFromBackend[syncable] =
           nSyncedFromBackend(syncable) + itemsToWrite.length;
 
-      // Emit sync completed event with real statistics
-      if (_onSyncCompleted != null) {
+      // Emit sync completed event with real statistics (only if detailed events are enabled)
+      if (_enableDetailedEvents && _onSyncCompleted != null) {
         final event = SyncCompletedEvent(
           syncableType: syncable,
           source: syncSource,

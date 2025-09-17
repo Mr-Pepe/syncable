@@ -7,7 +7,7 @@ import 'package:mockito/mockito.dart';
 import 'package:supabase/supabase.dart';
 import 'package:syncable/src/supabase_names.dart';
 import 'package:syncable/syncable.dart';
-import 'package:test/test.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:uuid/uuid.dart';
 
 import 'utils/test_database.dart';

@@ -192,18 +192,69 @@ It goes through the local tables for all registered syncables and sets the user
 ID for all items that don't have a user ID yet.
 If syncing is enabled, those items will then get synced to the backend automatically.
 
-### Sync Event Notifications 📢
+### Monitoring Sync State 📢
 
-Add optional callbacks to be notified when synchronization starts or completes:
+The SyncManager provides two ways to monitor sync state:
+
+#### Simple Approach (Recommended)
+
+For most use cases, use the built-in `ChangeNotifier` interface:
 
 ```dart
 final syncManager = SyncManager(
   localDatabase: localDatabase,
   supabaseClient: supabaseClient,
-  onSyncStarted: (event) => showLoadingIndicator(),
-  onSyncCompleted: (event) => hideLoadingIndicator(),
+);
+
+// Listen to sync state changes
+syncManager.addListener(() {
+  if (syncManager.syncInProgress) {
+    showLoadingIndicator();
+  } else {
+    hideLoadingIndicator();
+  }
+});
+
+// Or use with ValueListenableBuilder in Flutter
+ValueListenableBuilder<bool>(
+  valueListenable: syncManager,
+  builder: (context, syncInProgress, child) {
+    return syncInProgress
+      ? CircularProgressIndicator()
+      : Icon(Icons.check);
+  },
 );
 ```
+
+#### Advanced Event Notifications
+
+For advanced use cases requiring detailed information per syncable type, enable detailed events:
+
+```dart
+final syncManager = SyncManager(
+  localDatabase: localDatabase,
+  supabaseClient: supabaseClient,
+  enableDetailedEvents: true,  // Enable detailed events
+  onSyncStarted: (event) {
+    print('Sync started for ${event.syncableType} from ${event.source}');
+    // event.source can be SyncEventSource.fullSync or SyncEventSource.realtime
+  },
+  onSyncCompleted: (event) {
+    print('Sync completed for ${event.syncableType}: ${event.itemsReceived} items received');
+    // Access detailed statistics: itemsReceived, itemsUpdated, itemsDeleted
+  },
+);
+```
+
+**When to use detailed events:**
+- You need to track sync progress per table/syncable type
+- You want to distinguish between full sync and real-time sync events
+- You need detailed statistics about sync operations
+
+**When to use simple approach:**
+- You just want to show a loading indicator during sync
+- You want minimal complexity and overhead
+- You don't need per-table sync information
 
 ### Optimizations ⚡
 
