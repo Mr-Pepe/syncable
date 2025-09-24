@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:collection/collection.dart';
 import 'package:drift/drift.dart';
@@ -211,8 +212,8 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
 
   final Map<Type, StreamSubscription<List<Syncable>>> _localSubscriptions = {};
 
-  RealtimeChannel? _backendSubscription;
-  bool get isSubscribedToBackend => _backendSubscription != null;
+  final Map<String, RealtimeChannel> _backendSubscriptions = {};
+  bool get isSubscribedToBackend => _backendSubscriptions.isNotEmpty;
 
   /// The number of items of type [syncable] that have been synced to the
   /// backend.
@@ -233,7 +234,11 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
     for (final subscription in _localSubscriptions.values) {
       subscription.cancel();
     }
-    _backendSubscription?.unsubscribe();
+    // Unsubscribe from all channels
+    for (final subscription in _backendSubscriptions.values) {
+      subscription.unsubscribe();
+    }
+    _backendSubscriptions.clear();
     super.dispose();
   }
 
@@ -408,13 +413,13 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
     final otherDevicesActive = _otherDevicesActive();
 
     if (!_syncingEnabled || !otherDevicesActive) {
-      if (_backendSubscription != null) {
-        _backendSubscription?.unsubscribe();
-        _backendSubscription = null;
+      // Unsubscribe from all existing channels
+      for (final subscription in _backendSubscriptions.values) {
+        subscription.unsubscribe();
       }
+      _backendSubscriptions.clear();
 
       String reason;
-
       if (!__syncingEnabled) {
         reason = 'syncing is disabled';
       } else if (userId.isEmpty) {
@@ -426,28 +431,41 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
       }
 
       _logger.warning('Not subscribed to backend changes because $reason');
-
       return;
     }
 
-    if (_backendSubscription != null) {
-      return;
+    if (_backendSubscriptions.isNotEmpty) {
+      return; // Already subscribed
     }
 
-    _backendSubscription = _supabaseClient.channel('backend_changes');
-
+    // Create a dedicated channel for each table
     for (final syncable in _syncables) {
-      _backendSubscription?.onPostgresChanges(
+      final tableName = _backendTables[syncable]!;
+      final channelName = 'sync_$tableName';
+
+      _logger.info('Creating Realtime subscription for table: $tableName');
+
+      final channel = _supabaseClient.channel(channelName);
+
+      channel.onPostgresChanges(
         schema: publicSchema,
-        table: _backendTables[syncable],
+        table: tableName,
         event: PostgresChangeEvent.all,
         callback: (p) {
-          if (_disposed) return;
+          if (_disposed) {
+            return;
+          }
+
           if (p.newRecord.isNotEmpty) {
-            final item = _fromJsons[syncable]!(p.newRecord);
-            _inQueues[syncable]!.add(item);
-            if (_enableDetailedEvents) {
-              _incomingSources[syncable]![item.id] = SyncEventSource.realtime;
+            try {
+              final item = _fromJsons[syncable]!(p.newRecord);
+              _inQueues[syncable]!.add(item);
+
+              if (_enableDetailedEvents) {
+                _incomingSources[syncable]![item.id] = SyncEventSource.realtime;
+              }
+            } catch (e, stack) {
+              _logger.severe('Error processing Realtime event for $tableName: $e', e, stack);
             }
           }
         },
@@ -457,17 +475,21 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
           value: _userId,
         ),
       );
+
+      // Subscribe to the channel
+      channel.subscribe((status, error) {
+        if (error != null) {
+          _logger.severe('Realtime subscription error for $tableName: $error');
+        } else if (status == RealtimeSubscribeStatus.subscribed) {
+          _logger.info('Realtime subscription active for $tableName');
+        }
+      });
+
+      // Store the channel for later cleanup
+      _backendSubscriptions[tableName] = channel;
     }
 
-    _backendSubscription?.subscribe((status, error) {
-      if (error != null) {
-        // coverage:ignore-start
-        _logger.severe('Backend subscription error: $error');
-        // coverage:ignore-end
-      }
-    });
-
-    _logger.info('Subscribed to backend changes');
+    _logger.info('Subscribed to backend changes for ${_syncables.length} tables');
   }
 
   /// Syncs all tables registered with the sync manager.
@@ -594,19 +616,37 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
     // Use batches because all the UUIDs make the URI become too long otherwise.
     for (final batch in itemsToPull.slices(100)) {
       if (!_syncingEnabled) return;
-      final pulledBatch = await _supabaseClient
-          .from(_backendTables[syncable]!)
-          .select()
-          .eq(userIdKey, _userId)
-          .inFilter(idKey, batch)
-          .then((data) => data.map(_fromJsons[syncable]!));
 
-      _inQueues[syncable]!.addAll(pulledBatch);
-      // Mark these as full sync items (only if detailed events are enabled)
-      if (_enableDetailedEvents) {
-        for (final item in pulledBatch) {
-          _incomingSources[syncable]![item.id] = SyncEventSource.fullSync;
+      try {
+        final pulledBatch = await _supabaseClient
+            .from(_backendTables[syncable]!)
+            .select()
+            .eq(userIdKey, _userId)
+            .inFilter(idKey, batch)
+            .then((data) => data.map(_fromJsons[syncable]!));
+
+        _inQueues[syncable]!.addAll(pulledBatch);
+        // Mark these as full sync items (only if detailed events are enabled)
+        if (_enableDetailedEvents) {
+          for (final item in pulledBatch) {
+            _incomingSources[syncable]![item.id] = SyncEventSource.fullSync;
+          }
         }
+      } on SocketException catch (e) {
+        _logger.warning(
+          'Network error during item pull for ${_backendTables[syncable]}: ${e.message}',
+        );
+        break; // Exit loop on network error
+      } on HttpException catch (e) {
+        _logger.warning(
+          'HTTP error during item pull for ${_backendTables[syncable]}: ${e.message}',
+        );
+        break; // Exit loop on HTTP error
+      } catch (e) {
+        _logger.severe(
+          'Unexpected error during item pull for ${_backendTables[syncable]}: $e',
+        );
+        break; // Exit loop on any other error
       }
     }
 
@@ -629,35 +669,76 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
     return false;
   }
 
+  /// Quick connectivity check to prevent network calls when offline
+  Future<bool> _hasNetworkConnectivity() async {
+    try {
+      final result = await InternetAddress.lookup('google.com')
+          .timeout(const Duration(seconds: 2));
+      return result.isNotEmpty && result[0].rawAddress.isNotEmpty;
+    } on SocketException catch (_) {
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Retrieves the IDs and `lastUpdatedAt` timestamps for all rows of a
   /// syncable in the backend. These can be used to determine which items need
   /// to be synced from the backend.
   Future<List<Map<String, dynamic>>> _fetchBackendItemMetadata(
     Type syncable,
   ) async {
+    // 🛡️ OFFLINE PROTECTION: Check network connectivity before making requests
+    // This prevents ClientSocketException crashes when offline
+    final hasNetwork = await _hasNetworkConnectivity();
+    if (!hasNetwork) {
+      _logger.warning(
+        'Skipping backend metadata fetch for ${_backendTables[syncable]} - '
+        'no network connectivity detected',
+      );
+      return []; // Return empty list instead of crashing
+    }
+
     final List<Map<String, dynamic>> backendItems = [];
 
     int offset = 0;
     bool hasMore = true;
 
     while (hasMore && _syncingEnabled) {
-      final batch = await _supabaseClient
-          .from(_backendTables[syncable]!)
-          .select('$idKey,$updatedAtKey')
-          .eq(userIdKey, _userId)
-          .range(offset, offset + _maxRows - 1)
-          // Use consistent ordering to prevent duplicates
-          .order(idKey, ascending: true);
+      try {
+        final batch = await _supabaseClient
+            .from(_backendTables[syncable]!)
+            .select('$idKey,$updatedAtKey')
+            .eq(userIdKey, _userId)
+            .range(offset, offset + _maxRows - 1)
+            // Use consistent ordering to prevent duplicates
+            .order(idKey, ascending: true);
 
-      backendItems.addAll(batch);
-      hasMore = batch.length == _maxRows;
-      offset += _maxRows;
+        backendItems.addAll(batch);
+        hasMore = batch.length == _maxRows;
+        offset += _maxRows;
 
-      if (batch.isNotEmpty) {
-        _logger.info(
-          'Fetched batch of ${batch.length} metadata items for table '
-          "'${_backendTables[syncable]!}', total so far: ${backendItems.length}",
+        if (batch.isNotEmpty) {
+          _logger.info(
+            'Fetched batch of ${batch.length} metadata items for table '
+            "'${_backendTables[syncable]!}', total so far: ${backendItems.length}",
+          );
+        }
+      } on SocketException catch (e) {
+        _logger.warning(
+          'Network error during metadata fetch for ${_backendTables[syncable]}: ${e.message}',
         );
+        break; // Exit loop on network error to prevent crashes
+      } on HttpException catch (e) {
+        _logger.warning(
+          'HTTP error during metadata fetch for ${_backendTables[syncable]}: ${e.message}',
+        );
+        break; // Exit loop on HTTP error
+      } catch (e) {
+        _logger.severe(
+          'Unexpected error during metadata fetch for ${_backendTables[syncable]}: $e',
+        );
+        break; // Exit loop on any other error
       }
     }
 
@@ -701,12 +782,29 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
 
       assert(!outgoing.any((s) => s.userId?.isEmpty ?? true));
 
-      await _supabaseClient
-          .from(backendTable)
-          .upsert(
-            outgoing.map((x) => x.toJson()).toList(),
-            onConflict: '$idKey,$userIdKey',
-          );
+      try {
+        await _supabaseClient
+            .from(backendTable)
+            .upsert(
+              outgoing.map((x) => x.toJson()).toList(),
+              onConflict: '$idKey,$userIdKey',
+            );
+      } on SocketException catch (e) {
+        _logger.warning(
+          'Network error during upsert to $backendTable: ${e.message}',
+        );
+        break; // Exit loop on network error
+      } on HttpException catch (e) {
+        _logger.warning(
+          'HTTP error during upsert to $backendTable: ${e.message}',
+        );
+        break; // Exit loop on HTTP error
+      } catch (e) {
+        _logger.severe(
+          'Unexpected error during upsert to $backendTable: $e',
+        );
+        break; // Exit loop on any other error
+      }
 
       sentItems.addAll(outgoing);
 
