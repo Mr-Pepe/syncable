@@ -93,7 +93,6 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
     SyncCompletedEventCallback? onSyncCompleted,
   }) : _localDb = localDatabase,
        _supabaseClient = supabaseClient,
-       _syncInterval = syncInterval,
        _maxRows = maxRows,
        _syncTimestampStorage = syncTimestampStorage,
        _devicesConsideredInactiveAfter = otherDevicesConsideredInactiveAfter,
@@ -110,7 +109,6 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
   final T _localDb;
   final SupabaseClient _supabaseClient;
   final SyncTimestampStorage? _syncTimestampStorage;
-  final Duration _syncInterval;
   final int _maxRows;
   final Duration _devicesConsideredInactiveAfter;
 
@@ -322,17 +320,16 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
 
   Future<void> _startLoop() async {
     if (_loopRunning) {
-      print('⚠️ [Syncable] Sync loop already running, skipping start');
+      _logger.warning('Sync loop already running, skipping start');
       return;
     }
     _loopRunning = true;
-    print('🚀 [Syncable] Sync loop STARTED with adaptive intervals');
-    _logger.info('Sync loop started');
+    _logger.info('Sync loop started with adaptive intervals');
 
     while (!_disposed) {
       final iterationStart = DateTime.now();
       _loopIterationCounter++;
-      print('🔄 [Syncable] Sync loop iteration #$_loopIterationCounter starting...');
+      _logger.fine('Sync loop iteration #$_loopIterationCounter starting');
 
       // ✅ SÉCURITÉ : Tous les 20 loops, resynchroniser depuis Drift
       // Cela capture tout item qui aurait pu être perdu de la RAM
