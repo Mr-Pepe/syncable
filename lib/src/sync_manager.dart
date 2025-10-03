@@ -13,6 +13,24 @@ import 'package:syncable/src/syncable.dart';
 import 'package:syncable/src/syncable_database.dart';
 import 'package:syncable/src/syncable_table.dart';
 
+/// Sync mode based on user activity patterns.
+///
+/// This is used to adaptively adjust sync intervals to balance
+/// battery consumption and responsiveness.
+enum SyncMode {
+  /// User is actively modifying data (last change < 10 seconds).
+  /// Sync interval: 5 seconds for maximum responsiveness.
+  active,
+
+  /// Recent modifications but user is no longer actively editing (10s - 2min).
+  /// Sync interval: 15 seconds for good balance.
+  recent,
+
+  /// No modifications for > 2 minutes.
+  /// Sync interval: 30 seconds for battery conservation.
+  idle,
+}
+
 /// The [SyncManager] is the main class for syncing data between a local Drift
 /// database and a Supabase backend.
 ///
@@ -126,6 +144,20 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
       notifyListeners();
     }
   }
+
+  // ============= ADAPTIVE SYNC INTERVAL FIELDS =============
+
+  /// Timestamp of the last detected local change.
+  /// Used to determine the current sync mode (active/recent/idle).
+  DateTime? _lastChangeDetected;
+
+  /// Completer used to interrupt the sync loop sleep when immediate sync is needed.
+  /// This allows waking up the loop before the normal interval expires.
+  Completer<void>? _syncTrigger;
+
+  /// Counter for sync loop iterations.
+  /// Used to trigger periodic safety checks (e.g., re-sync from Drift every N iterations).
+  int _loopIterationCounter = 0;
 
   /// Enables syncing for all registered syncables.
   ///
@@ -289,10 +321,41 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
   }
 
   Future<void> _startLoop() async {
+    if (_loopRunning) {
+      print('⚠️ [Syncable] Sync loop already running, skipping start');
+      return;
+    }
     _loopRunning = true;
+    print('🚀 [Syncable] Sync loop STARTED with adaptive intervals');
     _logger.info('Sync loop started');
 
     while (!_disposed) {
+      final iterationStart = DateTime.now();
+      _loopIterationCounter++;
+      print('🔄 [Syncable] Sync loop iteration #$_loopIterationCounter starting...');
+
+      // ✅ SÉCURITÉ : Tous les 20 loops, resynchroniser depuis Drift
+      // Cela capture tout item qui aurait pu être perdu de la RAM
+      if (_loopIterationCounter % 20 == 0) {
+        _logger.info('🔄 Periodic safety check (iteration #$_loopIterationCounter): re-syncing from Drift');
+        try {
+          for (final syncable in _syncables) {
+            if (_disposed) break;
+
+            // Récupérer les items locaux depuis Drift
+            final localItems = await _localDb.select(_localTables[syncable]!).get();
+
+            // Pousser vers outQueue seulement les items du user actuel
+            _pushLocalChangesToOutQueue(
+              syncable,
+              localItems.where((i) => i.userId == _userId),
+            );
+          }
+        } catch (e, s) {
+          _logger.severe('Error during periodic Drift re-sync: $e\n$s');
+        }
+      }
+
       try {
         for (final syncable in _syncables) {
           if (_disposed) break;
@@ -316,7 +379,24 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
       }
 
       if (_disposed) break;
-      await Future.delayed(_syncInterval);
+
+      // ✨ ADAPTIVE SYNC: Determine current mode and interval
+      final currentMode = _getCurrentMode();
+      final interval = _getIntervalForMode(currentMode);
+
+      print('💤 [Syncable] Loop iteration complete, sleeping for ${interval.inSeconds}s (mode: $currentMode)');
+
+      // Create a new completer for the next potential interruption
+      _syncTrigger = Completer<void>();
+
+      // Wait for EITHER the timeout OR an immediate sync trigger
+      await Future.any([
+        Future.delayed(interval),
+        _syncTrigger!.future,
+      ]);
+
+      final actualWaitTime = DateTime.now().difference(iterationStart);
+      print('⏰ [Syncable] Woke up after ${actualWaitTime.inSeconds}s (expected: ${interval.inSeconds}s)');
     }
 
     _loopRunning = false;
@@ -401,11 +481,29 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
         row.updatedAt.isAfter(outQueue[row.id]?.updatedAt ?? DateTime(0)) &&
         row.updatedAt.isAfter(_lastPushedTimestamp(syncable) ?? DateTime(0));
 
+    bool hasNewItems = false;
+
     for (final row
         in rows
             .where((r) => !receivedItems.contains(r))
             .where(updateHasNotBeenSentYet)) {
       outQueue[row.id] = row;
+      hasNewItems = true;
+    }
+
+    // ✨ ADAPTIVE SYNC: Detect changes and potentially wake up the loop
+    if (hasNewItems) {
+      // Update the last change timestamp
+      _lastChangeDetected = DateTime.now();
+
+      // If we're in IDLE or RECENT mode, wake up the loop immediately for faster sync
+      final currentMode = _getCurrentMode();
+      if (currentMode == SyncMode.idle || currentMode == SyncMode.recent) {
+        print('⚡ [Syncable] Local changes detected in $currentMode mode - triggering immediate sync');
+        _triggerImmediateSync();
+      } else {
+        print('📝 [Syncable] Local changes detected in $currentMode mode - will sync at next iteration');
+      }
     }
   }
 
@@ -459,11 +557,26 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
           if (p.newRecord.isNotEmpty) {
             try {
               final item = _fromJsons[syncable]!(p.newRecord);
+              final timestamp = DateTime.now().millisecondsSinceEpoch;
+              print('🔔 [Syncable] REALTIME [$timestamp]: Received item ${item.id} for ${syncable.toString()}');
+
               _inQueues[syncable]!.add(item);
+              print('🔔 [Syncable] REALTIME: Queue size after add: ${_inQueues[syncable]!.length}');
 
               if (_enableDetailedEvents) {
                 _incomingSources[syncable]![item.id] = SyncEventSource.realtime;
               }
+
+              // ⚡ NOUVEAU : Traiter immédiatement au lieu d'attendre le sync loop
+              // Utilise unawaited pour ne pas bloquer le callback Realtime
+              _processIncomingImmediate(syncable).then((_) {
+                final endTimestamp = DateTime.now().millisecondsSinceEpoch;
+                final latency = endTimestamp - timestamp;
+                print('✅ [Syncable] REALTIME: Processed in ${latency}ms');
+              }).catchError((e, stackTrace) {
+                _logger.severe('Error in immediate processing for $tableName: $e', e, stackTrace as StackTrace?);
+              });
+
             } catch (e, stack) {
               _logger.severe('Error processing Realtime event for $tableName: $e', e, stack);
             }
@@ -504,13 +617,46 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
     await _syncTables('Manual sync');
   }
 
-  Future<void> _syncTables(String reason) async {
+  /// Process all pending incoming data immediately.
+  ///
+  /// This method processes any data that has been fetched from the backend
+  /// but not yet written to the local database. This is useful for ensuring
+  /// data is immediately available in the UI after a sync operation.
+  ///
+  /// Normally, incoming data is processed in the main sync loop which runs
+  /// at regular intervals. This method allows you to bypass that wait.
+  Future<void> processIncomingImmediately() async {
     if (!__syncingEnabled) {
+      _logger.warning('Cannot process incoming data - syncing is disabled');
+      return;
+    }
+
+    if (userId.isEmpty) {
+      _logger.warning('Cannot process incoming data - user ID is empty');
+      return;
+    }
+
+    _logger.info('Processing incoming data immediately');
+
+    // Process all pending incoming data for each syncable
+    for (final syncable in _syncables) {
+      await _processIncoming(syncable);
+    }
+
+    _logger.info('Immediate incoming data processing complete');
+  }
+
+  Future<void> _syncTables(String reason) async {
+    print('🎯 [Syncable] _syncTables called - reason: $reason');
+
+    if (!__syncingEnabled) {
+      print('❌ [Syncable] _syncTables aborted - syncing disabled');
       _logger.warning('Tables not getting synced because syncing is disabled');
       return;
     }
 
     if (userId.isEmpty) {
+      print('❌ [Syncable] _syncTables aborted - userId empty');
       _logger.warning('Tables not getting synced because user ID is empty');
       return;
     }
@@ -625,7 +771,9 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
             .inFilter(idKey, batch)
             .then((data) => data.map(_fromJsons[syncable]!));
 
+        print('📦 [Syncable] Adding ${pulledBatch.length} items to queue for ${syncable.toString()}');
         _inQueues[syncable]!.addAll(pulledBatch);
+        print('📦 [Syncable] Queue size after add: ${_inQueues[syncable]!.length} for ${syncable.toString()}');
         // Mark these as full sync items (only if detailed events are enabled)
         if (_enableDetailedEvents) {
           for (final item in pulledBatch) {
@@ -768,11 +916,30 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
     final backendTable = _backendTables[syncable]!;
     final sentItems = _sentItems[syncable]!;
 
+    // ✅ NOUVEAU : Log si on retry des items
+    if (outQueue.isNotEmpty) {
+      final itemCount = outQueue.length;
+      _logger.info('📤 Processing $itemCount outgoing items for $backendTable');
+
+      // Détecter si c'est un retry (items plus vieux que 30 secondes)
+      final now = DateTime.now();
+      final hasOldItems = outQueue.values.any((item) =>
+        now.difference(item.updatedAt) > const Duration(seconds: 30)
+      );
+
+      if (hasOldItems) {
+        _logger.warning('⚠️ Retrying items from previous failed sync attempt for $backendTable');
+      }
+    }
+
     while (_syncingEnabled && outQueue.isNotEmpty) {
       final outgoing = Set<Syncable>.from(
         outQueue.values.where((f) => f.userId == _userId),
       );
-      outQueue.clear();
+
+      // ✅ PROTECTION DONNÉES : Ne PAS vider immédiatement
+      // Queue sera vidée SEULEMENT après succès de l'upsert
+      // outQueue.clear(); ← SUPPRIMÉ pour éviter perte de données
 
       if (outgoing.isEmpty) continue;
 
@@ -787,23 +954,30 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
             .from(backendTable)
             .upsert(
               outgoing.map((x) => x.toJson()).toList(),
-              onConflict: '$idKey,$userIdKey',
+              onConflict: idKey,
             );
+
+        // ✅ NOUVEAU : Vider la queue SEULEMENT après succès de l'upsert
+        for (final item in outgoing) {
+          outQueue.remove(item.id);
+        }
+
       } on SocketException catch (e) {
         _logger.warning(
           'Network error during upsert to $backendTable: ${e.message}',
         );
-        break; // Exit loop on network error
+        // ✅ Queue intacte, items seront retentés au prochain loop
+        break;
       } on HttpException catch (e) {
         _logger.warning(
           'HTTP error during upsert to $backendTable: ${e.message}',
         );
-        break; // Exit loop on HTTP error
+        break;
       } catch (e) {
         _logger.severe(
           'Unexpected error during upsert to $backendTable: $e',
         );
-        break; // Exit loop on any other error
+        break;
       }
 
       sentItems.addAll(outgoing);
@@ -823,7 +997,11 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
   Future<void> _processIncoming(Type syncable) async {
     final inQueue = _inQueues[syncable]!;
 
-    if (inQueue.isEmpty) return;
+    print('🔍 [Syncable] _processIncoming called for ${syncable.toString()} - queue size: ${inQueue.length}');
+    if (inQueue.isEmpty) {
+      print('❌ [Syncable] Queue is empty for ${syncable.toString()}, skipping processing');
+      return;
+    }
 
     final sentItems = _sentItems[syncable]!;
     final receivedItems = _receivedItems[syncable]!;
@@ -832,10 +1010,20 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
     var syncSource = SyncEventSource.fullSync; // Default
 
     for (final item in inQueue) {
-      // Skip if already processed
-      if (sentItems.contains(item) || receivedItems.contains(item)) {
+      // Skip only if already received from backend
+      // Items that were sent locally should still be processed when they come back from the server
+      if (receivedItems.contains(item)) {
+        print('❌ [Syncable] SKIP - already received: ${item.id}');
         continue;
       }
+
+      // Log if item was sent locally but is now being received from backend
+      if (sentItems.contains(item)) {
+        print('🔄 [Syncable] Processing server confirmation for locally sent item: ${item.id}');
+      } else {
+        print('✅ [Syncable] Adding new item from backend: ${item.id}');
+      }
+
       itemsToWrite[item.id] = item;
 
       // Use the first item's source as the batch source (only if detailed events are enabled)
@@ -877,6 +1065,72 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
     }
   }
 
+  /// Processes incoming items immediately for a specific syncable type.
+  ///
+  /// This method is called when items arrive via Realtime subscriptions to
+  /// provide instant UI updates instead of waiting for the next sync loop iteration.
+  ///
+  /// Unlike [_processIncoming], this only processes items for one syncable type
+  /// and is designed to be called asynchronously without blocking the Realtime callback.
+  Future<void> _processIncomingImmediate(Type syncable) async {
+    if (!_syncingEnabled) {
+      print('⚠️ [Syncable] Skipping immediate processing - syncing disabled');
+      return;
+    }
+
+    print('⚡ [Syncable] IMMEDIATE processing triggered for ${syncable.toString()}');
+
+    // Process this specific syncable immediately
+    await _processIncoming(syncable);
+
+    print('✅ [Syncable] IMMEDIATE processing completed for ${syncable.toString()}');
+  }
+
+  // ============= ADAPTIVE SYNC HELPER METHODS =============
+
+  /// Determines the current sync mode based on the time since last change.
+  ///
+  /// - ACTIVE: Last change < 10 seconds (sync every 5s)
+  /// - RECENT: Last change between 10s and 2 minutes (sync every 15s)
+  /// - IDLE: No change for > 2 minutes (sync every 30s)
+  SyncMode _getCurrentMode() {
+    if (_lastChangeDetected == null) {
+      return SyncMode.idle;
+    }
+
+    final timeSinceLastChange = DateTime.now().difference(_lastChangeDetected!);
+
+    if (timeSinceLastChange < const Duration(seconds: 10)) {
+      return SyncMode.active;
+    } else if (timeSinceLastChange < const Duration(minutes: 2)) {
+      return SyncMode.recent;
+    } else {
+      return SyncMode.idle;
+    }
+  }
+
+  /// Returns the sync interval for the given mode.
+  Duration _getIntervalForMode(SyncMode mode) {
+    switch (mode) {
+      case SyncMode.active:
+        return const Duration(seconds: 5);
+      case SyncMode.recent:
+        return const Duration(seconds: 15);
+      case SyncMode.idle:
+        return const Duration(seconds: 30);
+    }
+  }
+
+  /// Triggers an immediate sync by completing the sync trigger.
+  ///
+  /// This wakes up the sync loop before the normal interval expires,
+  /// allowing for faster sync when changes are detected.
+  void _triggerImmediateSync() {
+    if (_syncTrigger != null && !_syncTrigger!.isCompleted) {
+      _syncTrigger!.complete();
+    }
+  }
+
   Future<WriteStats> _batchWriteIncoming<S extends Syncable>(
     Type syncable,
     Map<String, S> incomingItems,
@@ -901,9 +1155,13 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
     for (final incomingItem in incomingItems.values) {
       final existingUpdatedAt = existingItems[incomingItem.id];
       if (existingUpdatedAt == null) {
+        print('🔧 [Syncable] Inserting new item: ${incomingItem.id}');
         itemsToInsert.add(incomingItem.toCompanion());
       } else if (incomingItem.updatedAt.isAfter(existingUpdatedAt)) {
+        print('🔧 [Syncable] Updating item: ${incomingItem.id} (${incomingItem.updatedAt} > $existingUpdatedAt)');
         itemsToReplace.add(incomingItem.toCompanion());
+      } else {
+        print('❌ [Syncable] SKIPPING item: ${incomingItem.id} - incoming: ${incomingItem.updatedAt}, existing: $existingUpdatedAt');
       }
     }
 
