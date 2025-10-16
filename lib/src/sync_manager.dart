@@ -15,6 +15,45 @@ import 'package:syncable/src/syncable.dart';
 import 'package:syncable/src/syncable_database.dart';
 import 'package:syncable/src/syncable_table.dart';
 
+/// Callback pour notifier les erreurs persistées dans la Dead Letter Queue.
+///
+/// Permet au code appelant (ex: SyncService) d'envoyer ces erreurs vers
+/// un système de monitoring externe (ex: Sentry) sans créer de dépendance
+/// directe dans le package syncable.
+///
+/// [tableName] Nom de la table backend (ex: "competitions", "photos")
+/// [itemId] ID de l'item en erreur
+/// [itemJson] Représentation JSON complète de l'item
+/// [errorType] Type d'erreur: 'network' ou 'application'
+/// [errorMessage] Message d'erreur lisible
+/// [stackTrace] Stack trace de l'erreur (peut être null)
+/// [retryCount] Nombre de tentatives avant échec final
+typedef OnDLQErrorCallback = void Function({
+  required String tableName,
+  required String itemId,
+  required Map<String, dynamic> itemJson,
+  required String errorType,
+  required String errorMessage,
+  String? stackTrace,
+  required int retryCount,
+});
+
+/// Callback pour envoyer des breadcrumbs de synchronisation.
+///
+/// Permet de tracer les événements importants du cycle de sync vers
+/// un système de monitoring externe (ex: Sentry breadcrumbs).
+///
+/// [message] Description de l'événement
+/// [category] Catégorie (ex: "sync", "circuit_breaker", "error_recovery")
+/// [level] Niveau de sévérité: "debug", "info", "warning", "error"
+/// [data] Données contextuelles additionnelles
+typedef OnSyncBreadcrumbCallback = void Function({
+  required String message,
+  required String category,
+  required String level,
+  Map<String, dynamic>? data,
+});
+
 /// Sync mode based on user activity patterns.
 ///
 /// This is used to adaptively adjust sync intervals to balance
@@ -70,8 +109,23 @@ class CircuitBreakerState {
   }
 
   /// Opens the circuit breaker (pauses syncing)
-  void open() {
+  void open({OnSyncBreadcrumbCallback? onBreadcrumb, Logger? logger}) {
     openedAt = DateTime.now();
+
+    // 🔴 Breadcrumb: Circuit breaker opened
+    try {
+      onBreadcrumb?.call(
+        message: 'Circuit breaker opened after $consecutiveNetworkErrors consecutive network errors',
+        category: 'circuit_breaker',
+        level: 'warning',
+        data: {
+          'consecutive_errors': consecutiveNetworkErrors,
+          'cooldown_minutes': 2,
+        },
+      );
+    } catch (e, s) {
+      logger?.warning('Error in onSyncBreadcrumb callback: $e\n$s');
+    }
   }
 
   /// Resets the circuit breaker (resumes syncing)
@@ -81,12 +135,12 @@ class CircuitBreakerState {
   }
 
   /// Records a network error and opens circuit if threshold is reached
-  void recordNetworkError() {
+  void recordNetworkError({OnSyncBreadcrumbCallback? onBreadcrumb, Logger? logger}) {
     consecutiveNetworkErrors++;
 
     // Open circuit after 5 consecutive network errors
     if (consecutiveNetworkErrors >= 5) {
-      open();
+      open(onBreadcrumb: onBreadcrumb, logger: logger);
     }
   }
 
@@ -157,6 +211,8 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
     bool enableDetailedEvents = false,
     SyncStartedEventCallback? onSyncStarted,
     SyncCompletedEventCallback? onSyncCompleted,
+    OnDLQErrorCallback? onDLQError,
+    OnSyncBreadcrumbCallback? onSyncBreadcrumb,
   }) : _localDb = localDatabase,
        _supabaseClient = supabaseClient,
        _maxRows = maxRows,
@@ -165,6 +221,8 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
        _enableDetailedEvents = enableDetailedEvents,
        _onSyncStarted = enableDetailedEvents ? onSyncStarted : null,
        _onSyncCompleted = enableDetailedEvents ? onSyncCompleted : null,
+       _onDLQError = onDLQError,
+       _onSyncBreadcrumb = onSyncBreadcrumb,
        assert(
          syncInterval.inMilliseconds > 0,
          'Sync interval must be positive',
@@ -188,6 +246,10 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
   // Callback functions for sync events
   final SyncStartedEventCallback? _onSyncStarted;
   final SyncCompletedEventCallback? _onSyncCompleted;
+
+  // Callback functions for monitoring integration (Sentry, etc.)
+  final OnDLQErrorCallback? _onDLQError;
+  final OnSyncBreadcrumbCallback? _onSyncBreadcrumb;
 
   /// This is what gets set when [enableSync] gets called. Internally, whether
   /// the syncing is enabled or not is determined by [_syncingEnabled].
@@ -426,6 +488,17 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
     _loopRunning = true;
     _logger.info('Sync loop started with adaptive intervals');
 
+    // 🔴 Breadcrumb: Sync loop started
+    try {
+      _onSyncBreadcrumb?.call(
+        message: 'Sync loop started with adaptive intervals',
+        category: 'sync',
+        level: 'info',
+      );
+    } catch (e, s) {
+      _logger.warning('Error in onSyncBreadcrumb callback: $e\n$s');
+    }
+
     while (!_disposed) {
       final iterationStart = DateTime.now();
       _loopIterationCounter++;
@@ -605,10 +678,28 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
             '🔄 Item ${row.id} was in permanent error tracking but has been modified locally '
             '(${errorItem.updatedAt} → ${row.updatedAt}) - giving it a second chance',
           );
+
+          // 🔴 Breadcrumb: Second chance for item
+          final backendTable = _backendTables[syncable]!;
+          try {
+            _onSyncBreadcrumb?.call(
+              message: 'Item modified after error - giving second chance',
+              category: 'error_recovery',
+              level: 'info',
+              data: {
+                'table': backendTable,
+                'item_id': row.id,
+                'previous_update': errorItem.updatedAt.toIso8601String(),
+                'new_update': row.updatedAt.toIso8601String(),
+              },
+            );
+          } catch (e, s) {
+            _logger.warning('Error in onSyncBreadcrumb callback: $e\n$s');
+          }
+
           errorQueue.remove(row.id);
           permanentErrorIds.remove(row.id);
           // Also clear its retry counter to start fresh
-          final backendTable = _backendTables[syncable]!;
           final retryKey = '$backendTable:${row.id}';
           _retryCounters.remove(retryKey);
         } else {
@@ -1187,7 +1278,10 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
           // Keep in queue, retry indefinitely, don't block other items
           // 🔴 NEW: Cap retry counter to prevent overflow
           _retryCounters[retryKey] = (retryCount + 1).clamp(0, _maxRetryCount);
-          circuitBreaker.recordNetworkError();
+          circuitBreaker.recordNetworkError(
+            onBreadcrumb: _onSyncBreadcrumb,
+            logger: _logger,
+          );
 
           _logger.info(
             '🌐 Network error for item ${item.id} - keeping in queue (retry #${retryCount + 1})',
@@ -1236,7 +1330,38 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
               );
             }
 
-            // TODO: Send Sentry alert here in Phase 3
+            // 🔴 Breadcrumb: Item moved to DLQ
+            try {
+              _onSyncBreadcrumb?.call(
+                message: 'Item moved to Dead Letter Queue after ${retryCount + 1} failed attempts',
+                category: 'sync',
+                level: 'error',
+                data: {
+                  'table': backendTable,
+                  'item_id': item.id,
+                  'error_type': errorType.toString(),
+                  'retry_count': retryCount + 1,
+                },
+              );
+            } catch (callbackError, callbackStack) {
+              _logger.warning('Error in onSyncBreadcrumb callback: $callbackError\n$callbackStack');
+            }
+
+            // 🔴 NEW: Notify monitoring system (Sentry) via callback
+            // Only notify for application errors (not network errors)
+            try {
+              _onDLQError?.call(
+                tableName: backendTable,
+                itemId: item.id,
+                itemJson: item.toJson(),
+                errorType: errorType.toString(),
+                errorMessage: e.toString(),
+                stackTrace: stackTrace.toString(),
+                retryCount: retryCount + 1,
+              );
+            } catch (callbackError, callbackStack) {
+              _logger.severe('Error in onDLQError callback: $callbackError\n$callbackStack');
+            }
 
           } else {
             _logger.warning(
