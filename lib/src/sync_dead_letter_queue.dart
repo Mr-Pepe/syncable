@@ -58,15 +58,13 @@ class SyncDeadLetterQueue {
   /// Retrieves all pending items from the dead letter queue.
   Future<List<DeadLetterItem>> getPendingItems() async {
     try {
-      final result = await _database.customSelect(
-        '''
+      final result = await _database.customSelect('''
         SELECT id, table_name, item_json, error_type, error_message,
                retry_count, first_error_at, last_error_at, last_stack_trace, status
         FROM sync_dead_letter_queue
         WHERE status = 'pending'
         ORDER BY last_error_at DESC
-        ''',
-      ).get();
+        ''').get();
 
       return result.map((row) => DeadLetterItem.fromRow(row)).toList();
     } catch (e, s) {
@@ -78,9 +76,11 @@ class SyncDeadLetterQueue {
   /// Gets count of pending items.
   Future<int> getPendingCount() async {
     try {
-      final result = await _database.customSelect(
-        'SELECT COUNT(*) as count FROM sync_dead_letter_queue WHERE status = \'pending\'',
-      ).getSingle();
+      final result = await _database
+          .customSelect(
+            'SELECT COUNT(*) as count FROM sync_dead_letter_queue WHERE status = \'pending\'',
+          )
+          .getSingle();
 
       return result.read<int>('count');
     } catch (e) {
