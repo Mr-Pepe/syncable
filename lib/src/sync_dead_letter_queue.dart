@@ -28,11 +28,11 @@ class SyncDeadLetterQueue {
 
       await _database.customInsert(
         '''
-        INSERT OR REPLACE INTO sync_dead_letter_queue (
+        INSERT OR REPLACE INTO sync_dead_letter_queue_table (
           id, table_name, item_json, error_type, error_message,
           retry_count, first_error_at, last_error_at, last_stack_trace, status
         ) VALUES (?, ?, ?, ?, ?, ?,
-          COALESCE((SELECT first_error_at FROM sync_dead_letter_queue WHERE id = ?), ?),
+          COALESCE((SELECT first_error_at FROM sync_dead_letter_queue_table WHERE id = ?), ?),
           ?, ?, 'pending')
         ''',
         variables: [
@@ -61,7 +61,7 @@ class SyncDeadLetterQueue {
       final result = await _database.customSelect('''
         SELECT id, table_name, item_json, error_type, error_message,
                retry_count, first_error_at, last_error_at, last_stack_trace, status
-        FROM sync_dead_letter_queue
+        FROM sync_dead_letter_queue_table
         WHERE status = 'pending'
         ORDER BY last_error_at DESC
         ''').get();
@@ -78,7 +78,7 @@ class SyncDeadLetterQueue {
     try {
       final result = await _database
           .customSelect(
-            'SELECT COUNT(*) as count FROM sync_dead_letter_queue WHERE status = \'pending\'',
+            'SELECT COUNT(*) as count FROM sync_dead_letter_queue_table WHERE status = \'pending\'',
           )
           .getSingle();
 
