@@ -39,19 +39,19 @@ const Duration _CIRCUIT_BREAKER_COOLDOWN = Duration(minutes: 2);
 /// For network errors: retries continue indefinitely (this doesn't apply).
 const int _MAX_RETRY_ATTEMPTS = 2; // 0, 1, 2 = 3 total attempts
 
-/// Callback pour notifier les erreurs persistées dans la Dead Letter Queue.
+/// Callback to notify errors persisted in the Dead Letter Queue.
 ///
-/// Permet au code appelant (ex: SyncService) d'envoyer ces erreurs vers
-/// un système de monitoring externe (ex: Sentry) sans créer de dépendance
-/// directe dans le package syncable.
+/// Allows calling code (e.g., SyncService) to send these errors to
+/// an external monitoring system (e.g., Sentry) without creating a direct
+/// dependency in the syncable package.
 ///
-/// [tableName] Nom de la table backend (ex: "competitions", "photos")
-/// [itemId] ID de l'item en erreur
-/// [itemJson] Représentation JSON complète de l'item
-/// [errorType] Type d'erreur: 'network' ou 'application'
-/// [errorMessage] Message d'erreur lisible
-/// [stackTrace] Stack trace de l'erreur (peut être null)
-/// [retryCount] Nombre de tentatives avant échec final
+/// [tableName] Backend table name (e.g., "competitions", "photos")
+/// [itemId] ID of the failed item
+/// [itemJson] Complete JSON representation of the item
+/// [errorType] Error type: 'network' or 'application'
+/// [errorMessage] Readable error message
+/// [stackTrace] Error stack trace (may be null)
+/// [retryCount] Number of attempts before final failure
 typedef OnDLQErrorCallback =
     void Function({
       required String tableName,
@@ -63,15 +63,15 @@ typedef OnDLQErrorCallback =
       required int retryCount,
     });
 
-/// Callback pour envoyer des breadcrumbs de synchronisation.
+/// Callback to send synchronization breadcrumbs.
 ///
-/// Permet de tracer les événements importants du cycle de sync vers
-/// un système de monitoring externe (ex: Sentry breadcrumbs).
+/// Allows tracing important sync cycle events to an external monitoring
+/// system (e.g., Sentry breadcrumbs).
 ///
-/// [message] Description de l'événement
-/// [category] Catégorie (ex: "sync", "circuit_breaker", "error_recovery")
-/// [level] Niveau de sévérité: "debug", "info", "warning", "error"
-/// [data] Données contextuelles additionnelles
+/// [message] Event description
+/// [category] Category (e.g., "sync", "circuit_breaker", "error_recovery")
+/// [level] Severity level: "debug", "info", "warning", "error"
+/// [data] Additional contextual data
 typedef OnSyncBreadcrumbCallback =
     void Function({
       required String message,
@@ -98,7 +98,7 @@ enum SyncMode {
   idle,
 }
 
-/// 🔴 NEW: Maximum retry counter value to prevent integer overflow.
+/// IMPORTANT: Maximum retry counter value to prevent integer overflow.
 ///
 /// For network errors that retry indefinitely, we cap the counter at this value.
 /// This prevents memory issues while maintaining retry behavior.
@@ -121,8 +121,8 @@ class CircuitBreakerState {
   bool get isOpen {
     if (openedAt == null) return false;
 
-    // Auto-reset after 2 minutes
-    final cooldownPeriod = const Duration(minutes: 2);
+    // Auto-reset after cooldown period
+    const cooldownPeriod = _CIRCUIT_BREAKER_COOLDOWN;
     final now = DateTime.now();
 
     if (now.difference(openedAt!) > cooldownPeriod) {
@@ -138,7 +138,7 @@ class CircuitBreakerState {
   void open({OnSyncBreadcrumbCallback? onBreadcrumb, Logger? logger}) {
     openedAt = DateTime.now();
 
-    // 🔴 Breadcrumb: Circuit breaker opened
+    // IMPORTANT: Breadcrumb - Circuit breaker opened
     try {
       onBreadcrumb?.call(
         message:
@@ -147,7 +147,7 @@ class CircuitBreakerState {
         level: 'warning',
         data: {
           'consecutive_errors': consecutiveNetworkErrors,
-          'cooldown_minutes': 2,
+          'cooldown_minutes': _CIRCUIT_BREAKER_COOLDOWN.inMinutes,
         },
       );
     } catch (e, s) {
@@ -168,8 +168,8 @@ class CircuitBreakerState {
   }) {
     consecutiveNetworkErrors++;
 
-    // Open circuit after 5 consecutive network errors
-    if (consecutiveNetworkErrors >= 5) {
+    // Open circuit after threshold is reached
+    if (consecutiveNetworkErrors >= _CIRCUIT_BREAKER_THRESHOLD) {
       open(onBreadcrumb: onBreadcrumb, logger: logger);
     }
   }
@@ -177,7 +177,7 @@ class CircuitBreakerState {
   /// Records a successful sync (resets error counter and closes circuit breaker)
   void recordSuccess() {
     consecutiveNetworkErrors = 0;
-    openedAt = null; // 🔴 FIXED: Close circuit breaker on success
+    openedAt = null; // IMPORTANT: Close circuit breaker on success
   }
 }
 
@@ -338,7 +338,7 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
       );
     }
 
-    // 🔴 NEW: Initialize Dead Letter Queue
+    // IMPORTANT: Initialize Dead Letter Queue
     _deadLetterQueue = SyncDeadLetterQueue(_localDb);
 
     __syncingEnabled = true;
@@ -401,20 +401,17 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
   final Map<Type, Set<Syncable>> _inQueues = {};
   final Map<Type, Map<String, Syncable>> _outQueues = {};
 
-  // 🔴 NEW: Error queues for application errors (moved after N retries)
+  // IMPORTANT: Error queues for application errors (moved after N retries)
   final Map<Type, Map<String, Syncable>> _errorQueues = {};
 
-  // 🔴 NEW: Permanent tracking of item IDs that failed with application errors
+  // IMPORTANT: Permanent tracking of item IDs that failed with application errors
   // This prevents re-injection after cleanup. Items stay here until manual resolution.
   final Map<Type, Set<String>> _permanentErrorItemIds = {};
 
-  // 🔴 NEW: Retry counters for each item (key: "tableName:itemId")
+  // IMPORTANT: Retry counters for each item (key: "tableName:itemId")
   final Map<String, int> _retryCounters = {};
 
-  // 🔴 NEW: Error classifier instance
-  final _errorClassifier = SyncErrorClassifier();
-
-  // 🔴 NEW: Circuit breaker state (per table)
+  // IMPORTANT: Circuit breaker state (per table)
   final Map<Type, CircuitBreakerState> _circuitBreakers = {};
 
   // Track sync source for incoming items
@@ -505,7 +502,7 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
     }
     _backendSubscriptions.clear();
 
-    // 🔴 NEW: Cleanup error management structures
+    // IMPORTANT: Cleanup error management structures
     _errorQueues.clear();
     _permanentErrorItemIds.clear();
     _retryCounters.clear();
@@ -556,11 +553,11 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
     _companions[S] = companionConstructor;
     _inQueues[S] = {};
     _outQueues[S] = {};
-    _errorQueues[S] = {}; // 🔴 NEW: Initialize error queue
+    _errorQueues[S] = {}; // IMPORTANT: Initialize error queue
     _permanentErrorItemIds[S] =
-        {}; // 🔴 NEW: Initialize permanent error tracking
+        {}; // IMPORTANT: Initialize permanent error tracking
     _circuitBreakers[S] =
-        CircuitBreakerState(); // 🔴 NEW: Initialize circuit breaker
+        CircuitBreakerState(); // IMPORTANT: Initialize circuit breaker
     _incomingSources[S] = {};
     _sentItems[S] = {};
     _receivedItems[S] = {};
@@ -574,7 +571,7 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
     _loopRunning = true;
     _logger.info('Sync loop started with adaptive intervals');
 
-    // 🔴 Breadcrumb: Sync loop started
+    // IMPORTANT: Breadcrumb - Sync loop started
     try {
       _onSyncBreadcrumb?.call(
         message: 'Sync loop started with adaptive intervals',
@@ -590,22 +587,22 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
       _loopIterationCounter++;
       _logger.fine('Sync loop iteration #$_loopIterationCounter starting');
 
-      // ✅ SÉCURITÉ : Tous les 20 loops, resynchroniser depuis Drift
-      // Cela capture tout item qui aurait pu être perdu de la RAM
-      if (_loopIterationCounter % 20 == 0) {
+      // SUCCESS: Periodic safety check - Re-sync from Drift every N iterations
+      // This captures any items that might have been lost from RAM
+      if (_loopIterationCounter % _DRIFT_RESYNC_INTERVAL == 0) {
         _logger.info(
-          '🔄 Periodic safety check (iteration #$_loopIterationCounter): re-syncing from Drift',
+          'Periodic safety check (iteration #$_loopIterationCounter): re-syncing from Drift',
         );
         try {
           for (final syncable in _syncables) {
             if (_disposed) break;
 
-            // Récupérer les items locaux depuis Drift
+            // Retrieve local items from Drift
             final localItems = await _localDb
                 .select(_localTables[syncable]!)
                 .get();
 
-            // Pousser vers outQueue seulement les items du user actuel
+            // Push to outQueue only items from current user
             _pushLocalChangesToOutQueue(
               syncable,
               localItems.where((i) => i.userId == _userId),
@@ -616,9 +613,9 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
         }
       }
 
-      // 🔴 NEW: Tous les 100 loops, nettoyer errorQueue pour éviter fuite mémoire
-      // Les erreurs sont déjà persistées dans DLQ (SQLite), on peut vider la RAM
-      if (_loopIterationCounter % 100 == 0) {
+      // IMPORTANT: Cleanup error queues periodically to prevent memory leak
+      // Errors are already persisted in DLQ (SQLite), we can clear RAM
+      if (_loopIterationCounter % _ERROR_QUEUE_CLEANUP_INTERVAL == 0) {
         _cleanupErrorQueues();
       }
 
@@ -646,12 +643,12 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
 
       if (_disposed) break;
 
-      // ✨ ADAPTIVE SYNC: Determine current mode and interval
+      // PERFORMANCE: Determine current mode and interval for adaptive sync
       final currentMode = _getCurrentMode();
       final interval = _getIntervalForMode(currentMode);
 
-      print(
-        '💤 [Syncable] Loop iteration complete, sleeping for ${interval.inSeconds}s (mode: $currentMode)',
+      _logger.fine(
+        'Loop iteration complete, sleeping for ${interval.inSeconds}s (mode: $currentMode)',
       );
 
       // Create a new completer for the next potential interruption
@@ -661,8 +658,8 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
       await Future.any([Future.delayed(interval), _syncTrigger!.future]);
 
       final actualWaitTime = DateTime.now().difference(iterationStart);
-      print(
-        '⏰ [Syncable] Woke up after ${actualWaitTime.inSeconds}s (expected: ${interval.inSeconds}s)',
+      _logger.fine(
+        'Woke up after ${actualWaitTime.inSeconds}s (expected: ${interval.inSeconds}s)',
       );
     }
 
@@ -756,7 +753,7 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
         in rows
             .where((r) => !receivedItems.contains(r))
             .where(updateHasNotBeenSentYet)) {
-      // 🔴 NEW: Check permanent error tracking first (survives cleanup)
+      // IMPORTANT: Check permanent error tracking first (survives cleanup)
       // This prevents re-injection of items that failed even after errorQueue is cleared
       if (permanentErrorIds.contains(row.id)) {
         // Check if user modified the item (updatedAt changed)
@@ -765,11 +762,11 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
         // If item is in errorQueue, check if it was modified
         if (errorItem != null && row.updatedAt.isAfter(errorItem.updatedAt)) {
           _logger.info(
-            '🔄 Item ${row.id} was in permanent error tracking but has been modified locally '
+            'Item ${row.id} was in permanent error tracking but has been modified locally '
             '(${errorItem.updatedAt} → ${row.updatedAt}) - giving it a second chance',
           );
 
-          // 🔴 Breadcrumb: Second chance for item
+          // IMPORTANT: Breadcrumb - Second chance for item
           final backendTable = _backendTables[syncable]!;
           try {
             _onSyncBreadcrumb?.call(
@@ -795,7 +792,7 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
         } else {
           // Item still in permanent error tracking, skip it
           _logger.fine(
-            '⏭️ Skipping item ${row.id} - in permanent error tracking (needs manual resolution or modification)',
+            'Skipping item ${row.id} - in permanent error tracking (needs manual resolution or modification)',
           );
           continue;
         }
@@ -807,7 +804,7 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
         // If updatedAt changed, user made changes → give it a second chance
         if (row.updatedAt.isAfter(errorItem.updatedAt)) {
           _logger.info(
-            '🔄 Item ${row.id} was in error queue but has been modified locally '
+            'Item ${row.id} was in error queue but has been modified locally '
             '(${errorItem.updatedAt} → ${row.updatedAt}) - giving it a second chance',
           );
           errorQueue.remove(row.id);
@@ -821,7 +818,7 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
         } else {
           // Same version still in error queue, skip it
           _logger.fine(
-            '⏭️ Skipping item ${row.id} - still in error queue (unmodified)',
+            'Skipping item ${row.id} - still in error queue (unmodified)',
           );
           continue;
         }
@@ -831,26 +828,26 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
       hasNewItems = true;
     }
 
-    // ✨ ADAPTIVE SYNC: Detect changes and potentially wake up the loop
+    // PERFORMANCE: Adaptive sync - detect changes and wake up the loop
     if (hasNewItems) {
       // Update the last change timestamp
       _lastChangeDetected = DateTime.now();
 
       // Always trigger immediate sync when local changes are detected
       // This ensures tests and real-world usage get fast sync response
-      print('⚡ [Syncable] Local changes detected - triggering immediate sync');
+      _logger.info('Local changes detected - triggering immediate sync');
       _triggerImmediateSync();
     }
   }
 
-  /// 🔴 NEW: Cleanup error queues to prevent memory leak
+  /// IMPORTANT: Cleanup error queues to prevent memory leak
   ///
   /// Error items are already persisted in Dead Letter Queue (SQLite).
   /// We can safely clear them from RAM since they're not actively retrying.
   /// Also cleans retry counters for cleaned items.
   ///
   /// Note: We do NOT reset circuit breakers here. Circuit breakers manage
-  /// their own state and auto-reset after 2 minutes. Resetting them during
+  /// their own state and auto-reset after cooldown period. Resetting them during
   /// cleanup could cause issues if network errors are still ongoing in outQueue.
   void _cleanupErrorQueues() {
     try {
@@ -874,15 +871,15 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
           errorQueue.clear();
           totalCleared += count;
 
-          // 🔴 FIXED: Do NOT reset circuit breaker here
-          // Circuit breaker has its own auto-reset logic (2 minutes)
+          // IMPORTANT: Do NOT reset circuit breaker here
+          // Circuit breaker has its own auto-reset logic (cooldown period)
           // Resetting it here could interfere with network error handling
         }
       }
 
       if (totalCleared > 0) {
         _logger.info(
-          '🧹 Cleaned $totalCleared items from error queues and '
+          'Cleaned $totalCleared items from error queues and '
           '$totalRetryCountersCleared retry counters (persisted in DLQ)',
         );
       }
@@ -942,26 +939,26 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
             try {
               final item = _fromJsons[syncable]!(p.newRecord);
               final timestamp = DateTime.now().millisecondsSinceEpoch;
-              print(
-                '🔔 [Syncable] REALTIME [$timestamp]: Received item ${item.id} for ${syncable.toString()}',
+              _logger.fine(
+                'REALTIME [$timestamp]: Received item ${item.id} for $syncable',
               );
 
               _inQueues[syncable]!.add(item);
-              print(
-                '🔔 [Syncable] REALTIME: Queue size after add: ${_inQueues[syncable]!.length}',
+              _logger.fine(
+                'REALTIME: Queue size after add: ${_inQueues[syncable]!.length}',
               );
 
               if (_enableDetailedEvents) {
                 _incomingSources[syncable]![item.id] = SyncEventSource.realtime;
               }
 
-              // ⚡ NOUVEAU : Traiter immédiatement au lieu d'attendre le sync loop
-              // Utilise unawaited pour ne pas bloquer le callback Realtime
+              // PERFORMANCE: Process immediately instead of waiting for sync loop
+              // Uses unawaited to not block the Realtime callback
               _processIncomingImmediate(syncable)
                   .then((_) {
                     final endTimestamp = DateTime.now().millisecondsSinceEpoch;
                     final latency = endTimestamp - timestamp;
-                    print('✅ [Syncable] REALTIME: Processed in ${latency}ms');
+                    _logger.fine('REALTIME: Processed in ${latency}ms');
                   })
                   .catchError((e, stackTrace) {
                     _logger.severe(
@@ -1046,16 +1043,16 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
   }
 
   Future<void> _syncTables(String reason) async {
-    print('🎯 [Syncable] _syncTables called - reason: $reason');
+    _logger.fine('_syncTables called - reason: $reason');
 
     if (!__syncingEnabled) {
-      print('❌ [Syncable] _syncTables aborted - syncing disabled');
+      _logger.warning('_syncTables aborted - syncing disabled');
       _logger.warning('Tables not getting synced because syncing is disabled');
       return;
     }
 
     if (userId.isEmpty) {
-      print('❌ [Syncable] _syncTables aborted - userId empty');
+      _logger.warning('_syncTables aborted - userId empty');
       _logger.warning('Tables not getting synced because user ID is empty');
       return;
     }
@@ -1170,12 +1167,12 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
             .inFilter(idKey, batch)
             .then((data) => data.map(_fromJsons[syncable]!));
 
-        print(
-          '📦 [Syncable] Adding ${pulledBatch.length} items to queue for ${syncable.toString()}',
+        _logger.fine(
+          'Adding ${pulledBatch.length} items to queue for $syncable',
         );
         _inQueues[syncable]!.addAll(pulledBatch);
-        print(
-          '📦 [Syncable] Queue size after add: ${_inQueues[syncable]!.length} for ${syncable.toString()}',
+        _logger.fine(
+          'Queue size after add: ${_inQueues[syncable]!.length} for $syncable',
         );
         // Mark these as full sync items (only if detailed events are enabled)
         if (_enableDetailedEvents) {
@@ -1322,10 +1319,10 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
     final sentItems = _sentItems[syncable]!;
     final circuitBreaker = _circuitBreakers[syncable]!;
 
-    // 🔴 NEW: Check circuit breaker before attempting sync
+    // IMPORTANT: Check circuit breaker before attempting sync
     if (circuitBreaker.isOpen) {
       _logger.warning(
-        '🚫 Circuit breaker OPEN for $backendTable - skipping sync '
+        'Circuit breaker OPEN for $backendTable - skipping sync '
         '(${circuitBreaker.consecutiveNetworkErrors} consecutive network errors)',
       );
       return; // Skip this table entirely when circuit is open
@@ -1334,10 +1331,10 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
     if (outQueue.isEmpty) return;
 
     _logger.info(
-      '📤 Processing ${outQueue.length} outgoing items for $backendTable',
+      'Processing ${outQueue.length} outgoing items for $backendTable',
     );
 
-    // 🔴 NEW: Process items one by one to avoid blocking entire queue on single error
+    // IMPORTANT: Process items one by one to avoid blocking entire queue on single error
     final itemsToProcess = outQueue.values.toList();
 
     for (final item in itemsToProcess) {
@@ -1347,9 +1344,9 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
       final retryKey = '$backendTable:${item.id}';
       final retryCount = _retryCounters[retryKey] ?? 0;
 
-      // 🔴 NEW: Skip items that are in error queue (application errors)
+      // IMPORTANT: Skip items that are in error queue (application errors)
       if (errorQueue.containsKey(item.id)) {
-        _logger.fine('⏭️ Skipping item ${item.id} - already in error queue');
+        _logger.fine('Skipping item ${item.id} - already in error queue');
         continue;
       }
 
@@ -1359,7 +1356,7 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
           item.toJson(),
         ], onConflict: idKey);
 
-        // ✅ SUCCESS: Remove from queue and reset counters
+        // SUCCESS: Remove from queue and reset counters
         outQueue.remove(item.id);
         _retryCounters.remove(retryKey);
         circuitBreaker.recordSuccess(); // Reset circuit breaker on success
@@ -1373,20 +1370,20 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
           await _updateLastPushedTimestamp(syncable, item.updatedAt);
         }
 
-        _logger.fine('✅ Successfully synced item ${item.id} to $backendTable');
+        _logger.fine('Successfully synced item ${item.id} to $backendTable');
       } catch (e, stackTrace) {
-        // 🔴 NEW: Classify the error
+        // IMPORTANT: Classify the error
         final errorType = SyncErrorClassifier.classify(e);
 
         _logger.warning(
-          '⚠️ Error syncing item ${item.id} to $backendTable '
+          'Error syncing item ${item.id} to $backendTable '
           '(retry #$retryCount, type: $errorType): $e',
         );
 
         if (errorType == SyncErrorType.network) {
           // ============ NETWORK ERROR ============
           // Keep in queue, retry indefinitely, don't block other items
-          // 🔴 NEW: Cap retry counter to prevent overflow
+          // IMPORTANT: Cap retry counter to prevent overflow
           _retryCounters[retryKey] = (retryCount + 1).clamp(0, _maxRetryCount);
           circuitBreaker.recordNetworkError(
             onBreadcrumb: _onSyncBreadcrumb,
@@ -1394,53 +1391,53 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
           );
 
           _logger.info(
-            '🌐 Network error for item ${item.id} - keeping in queue (retry #${retryCount + 1})',
+            'Network error for item ${item.id} - keeping in queue (retry #${retryCount + 1})',
           );
 
-          // ⚠️ CRITICAL: Use continue, NOT break!
+          // CRITICAL: Use continue, NOT break!
           // This allows processing other items even if one fails
           continue;
         } else {
           // ============ APPLICATION ERROR ============
           // Move to error queue after N retries
-          // 🔴 NEW: Cap retry counter to prevent overflow
+          // IMPORTANT: Cap retry counter to prevent overflow
           _retryCounters[retryKey] = (retryCount + 1).clamp(0, _maxRetryCount);
 
-          if (retryCount >= 2) {
-            // 3 total attempts (0, 1, 2)
+          if (retryCount >= _MAX_RETRY_ATTEMPTS) {
+            // Max attempts reached (e.g., 0, 1, 2 = 3 total attempts)
             // Move to error queue
             errorQueue[item.id] = item;
             outQueue.remove(item.id);
             _retryCounters.remove(retryKey);
 
-            // 🔴 NEW: Track permanently to prevent re-injection after cleanup
+            // IMPORTANT: Track permanently to prevent re-injection after cleanup
             final permanentErrorIds = _permanentErrorItemIds[syncable]!;
             permanentErrorIds.add(item.id);
 
             _logger.severe(
-              '🔴 APPLICATION ERROR for item ${item.id} after ${retryCount + 1} attempts - '
+              'APPLICATION ERROR for item ${item.id} after ${retryCount + 1} attempts - '
               'moved to error queue and permanent error tracking. Error: $e\n'
               'Stack trace: $stackTrace',
             );
 
-            // 🔴 NEW: Save to Dead Letter Queue (SQLite)
+            // IMPORTANT: Save to Dead Letter Queue (SQLite)
             if (_deadLetterQueue != null) {
               await _deadLetterQueue!.saveFailedItem(
                 tableName: backendTable,
                 itemId: item.id,
                 itemJson: item.toJson(),
-                errorType: errorType.toString(),
+                errorType: errorType.name,  // Use .name instead of .toString() to get "application" or "network"
                 errorMessage: e.toString(),
                 stackTrace: stackTrace.toString(),
                 retryCount: retryCount + 1,
               );
             } else {
               _logger.warning(
-                '⚠️ Dead Letter Queue not initialized - error not persisted to DB',
+                'Dead Letter Queue not initialized - error not persisted to DB',
               );
             }
 
-            // 🔴 Breadcrumb: Item moved to DLQ
+            // IMPORTANT: Breadcrumb - Item moved to DLQ
             try {
               _onSyncBreadcrumb?.call(
                 message:
@@ -1460,7 +1457,7 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
               );
             }
 
-            // 🔴 NEW: Notify monitoring system (Sentry) via callback
+            // IMPORTANT: Notify monitoring system (Sentry) via callback
             // Only notify for application errors (not network errors)
             try {
               _onDLQError?.call(
@@ -1479,11 +1476,11 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
             }
           } else {
             _logger.warning(
-              '⚠️ Application error for item ${item.id} - will retry (attempt ${retryCount + 1}/3)',
+              'Application error for item ${item.id} - will retry (attempt ${retryCount + 1}/${_MAX_RETRY_ATTEMPTS + 1})',
             );
           }
 
-          // ⚠️ CRITICAL: Use continue, NOT break!
+          // CRITICAL: Use continue, NOT break!
           continue;
         }
       }
@@ -1553,7 +1550,7 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
 
     if (itemsToWrite.isEmpty) return;
 
-    // 🔴 NEW: Try to write items with error handling
+    // IMPORTANT: Try to write items with error handling
     try {
       final writeStats = await _batchWriteIncoming(syncable, itemsToWrite);
 
@@ -1562,7 +1559,7 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
           nSyncedFromBackend(syncable) + itemsToWrite.length;
 
       _logger.info(
-        '✅ Successfully wrote ${itemsToWrite.length} items from backend to local DB '
+        'Successfully wrote ${itemsToWrite.length} items from backend to local DB '
         '(${writeStats.itemsInserted} inserted, ${writeStats.itemsUpdated} updated)',
       );
 
@@ -1579,11 +1576,11 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
         _onSyncCompleted(event);
       }
     } catch (e, stackTrace) {
-      // 🔴 NEW: Handle errors during local database writes
+      // IMPORTANT: Handle errors during local database writes
       final errorType = SyncErrorClassifier.classify(e);
 
       _logger.severe(
-        '❌ Error writing ${itemsToWrite.length} items to local DB for $backendTable '
+        'ERROR: Writing ${itemsToWrite.length} items to local DB for $backendTable '
         '(type: $errorType): $e\n'
         'Stack trace: $stackTrace',
       );
@@ -1594,10 +1591,10 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
 
       if (errorType == SyncErrorType.application) {
         _logger.severe(
-          '🔴 APPLICATION ERROR writing incoming data - this may indicate '
+          'APPLICATION ERROR writing incoming data - this may indicate '
           'database corruption or schema mismatch. Items will be re-fetched on next sync.',
         );
-        // TODO: Send Sentry alert in Phase 2
+        // Note: Monitoring systems should be configured to capture severe log errors
       }
     }
   }
@@ -1611,19 +1608,19 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
   /// and is designed to be called asynchronously without blocking the Realtime callback.
   Future<void> _processIncomingImmediate(Type syncable) async {
     if (!_syncingEnabled) {
-      print('⚠️ [Syncable] Skipping immediate processing - syncing disabled');
+      _logger.fine('Skipping immediate processing - syncing disabled');
       return;
     }
 
-    print(
-      '⚡ [Syncable] IMMEDIATE processing triggered for ${syncable.toString()}',
+    _logger.fine(
+      'IMMEDIATE processing triggered for $syncable',
     );
 
     // Process this specific syncable immediately
     await _processIncoming(syncable);
 
-    print(
-      '✅ [Syncable] IMMEDIATE processing completed for ${syncable.toString()}',
+    _logger.fine(
+      'IMMEDIATE processing completed for $syncable',
     );
   }
 
@@ -1706,16 +1703,16 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
     for (final incomingItem in incomingItems.values) {
       final existingUpdatedAt = existingItems[incomingItem.id];
       if (existingUpdatedAt == null) {
-        print('🔧 [Syncable] Inserting new item: ${incomingItem.id}');
+        _logger.fine('Inserting new item: ${incomingItem.id}');
         itemsToInsert.add(incomingItem.toCompanion());
       } else if (incomingItem.updatedAt.isAfter(existingUpdatedAt)) {
-        print(
-          '🔧 [Syncable] Updating item: ${incomingItem.id} (${incomingItem.updatedAt} > $existingUpdatedAt)',
+        _logger.fine(
+          'Updating item: ${incomingItem.id} (${incomingItem.updatedAt} > $existingUpdatedAt)',
         );
         itemsToReplace.add(incomingItem.toCompanion());
       } else {
-        print(
-          '❌ [Syncable] SKIPPING item: ${incomingItem.id} - incoming: ${incomingItem.updatedAt}, existing: $existingUpdatedAt',
+        _logger.fine(
+          'SKIPPING item: ${incomingItem.id} - incoming: ${incomingItem.updatedAt}, existing: $existingUpdatedAt',
         );
       }
     }
@@ -1798,7 +1795,7 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
       _sentItems[syncable]?.clear();
       _receivedItems[syncable]?.clear();
 
-      // 🔴 NEW: Clear error management structures
+      // IMPORTANT: Clear error management structures
       _errorQueues[syncable]?.clear();
       _permanentErrorItemIds[syncable]?.clear();
       _circuitBreakers[syncable]?.reset();
@@ -1808,12 +1805,106 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
     _nSyncedToBackend.clear();
     _nSyncedFromBackend.clear();
 
-    // 🔴 NEW: Clear retry counters
+    // IMPORTANT: Clear retry counters
     _retryCounters.clear();
 
     _logger.info(
       'Sync state cleared successfully (including error queues, permanent error tracking, and retry counters)',
     );
+  }
+
+  /// ========================================
+  /// Dead Letter Queue (DLQ) Retry Method
+  /// ========================================
+
+  /// Retries a failed item by re-submitting it to the upload queue.
+  ///
+  /// [tableName] Backend table name (e.g., "sponsors", "competitions")
+  /// [itemJson] JSON representation of the item to retry
+  ///
+  /// This method is called by SyncService.retryDLQItem() after retrieving
+  /// the item from the Dead Letter Queue.
+  ///
+  /// The item is automatically parsed, added to the upload queue, and the
+  /// sync cycle will retry sending it to the backend.
+  Future<void> retryDLQItem(
+    String tableName,
+    Map<String, dynamic> itemJson,
+  ) async {
+    try {
+      // Find the Syncable type corresponding to the backend table name
+      Type? syncableType;
+      for (final type in _syncables) {
+        if (_backendTables[type] == tableName) {
+          syncableType = type;
+          break;
+        }
+      }
+
+      if (syncableType == null) {
+        _logger.warning(
+          'Cannot retry DLQ item - table not registered: $tableName',
+        );
+        return;
+      }
+
+      // Parse JSON into typed Syncable object
+      final fromJson = _fromJsons[syncableType];
+      if (fromJson == null) {
+        _logger.warning(
+          'Cannot retry DLQ item - fromJson not found for type: $syncableType',
+        );
+        return;
+      }
+
+      final syncableItem = fromJson(itemJson);
+
+      // Add item to upload queue
+      final outQueue = _outQueues[syncableType];
+      if (outQueue == null) {
+        _logger.warning(
+          'Cannot retry DLQ item - outQueue not found for type: $syncableType',
+        );
+        return;
+      }
+
+      // Clean previous errors for this item
+      _errorQueues[syncableType]?.remove(syncableItem.id);
+      _permanentErrorItemIds[syncableType]?.remove(syncableItem.id);
+
+      // Reset retry counter
+      final retryKey = '$tableName:${syncableItem.id}';
+      _retryCounters.remove(retryKey);
+
+      // Add to upload queue
+      outQueue[syncableItem.id] = syncableItem;
+
+      _logger.info(
+        'DLQ item re-queued for upload: $tableName/${syncableItem.id}',
+      );
+
+      // Breadcrumb to trace the retry
+      try {
+        _onSyncBreadcrumb?.call(
+          message: 'DLQ item retried and re-queued',
+          category: 'dlq',
+          level: 'info',
+          data: {
+            'table': tableName,
+            'item_id': syncableItem.id,
+          },
+        );
+      } catch (e, s) {
+        _logger.warning('Error in onSyncBreadcrumb callback: $e\n$s');
+      }
+
+      // Trigger immediate synchronization
+      _lastChangeDetected = DateTime.now();
+      notifyListeners();
+    } catch (e, s) {
+      _logger.severe('Failed to retry DLQ item: $e\n$s');
+      rethrow;
+    }
   }
 }
 

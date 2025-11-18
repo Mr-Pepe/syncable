@@ -2,39 +2,39 @@ import 'dart:async';
 import 'dart:io';
 import 'package:supabase/supabase.dart';
 
-/// Type d'erreur de synchronisation
+/// Synchronization error type
 enum SyncErrorType {
-  /// Erreur réseau (pas de connexion, timeout, backend down)
-  /// Ces erreurs doivent être retentées indéfiniment
+  /// Network error (no connection, timeout, backend down)
+  /// These errors should be retried indefinitely
   network,
 
-  /// Erreur applicative (validation, permissions, données corrompues)
-  /// Ces erreurs doivent être déplacées vers une queue d'erreurs après N tentatives
+  /// Application error (validation, permissions, corrupted data)
+  /// These errors should be moved to an error queue after N attempts
   application,
 }
 
-/// Classification des erreurs de synchronisation
+/// Synchronization error classification
 ///
-/// Cette classe permet de distinguer les erreurs réseau (temporaires, à retenter indéfiniment)
-/// des erreurs applicatives (bugs, validation, à traiter manuellement).
+/// This class distinguishes between network errors (temporary, retry indefinitely)
+/// and application errors (bugs, validation, handle manually).
 class SyncErrorClassifier {
-  /// Classifie une erreur en type réseau ou applicatif
+  /// Classifies an error as network or application type
   ///
-  /// Erreurs réseau :
+  /// Network errors:
   /// - SocketException
   /// - HttpException (connection timeout, refused, etc.)
-  /// - ClientException avec message réseau
-  /// - Status codes HTTP : 502, 503, 504 (backend down)
+  /// - ClientException with network message
+  /// - HTTP status codes: 502, 503, 504 (backend down)
   /// - Timeout exceptions
   ///
-  /// Erreurs applicatives :
-  /// - Status codes HTTP : 400, 422 (validation)
-  /// - Status codes HTTP : 403, 401 (permissions)
-  /// - Status codes HTTP : 500 avec message non-réseau
-  /// - FormatException (parsing JSON)
-  /// - DatabaseException (contraintes locales)
+  /// Application errors:
+  /// - HTTP status codes: 400, 422 (validation)
+  /// - HTTP status codes: 403, 401 (permissions)
+  /// - HTTP status codes: 500 with non-network message
+  /// - FormatException (JSON parsing)
+  /// - DatabaseException (local constraints)
   static SyncErrorType classify(Object error) {
-    // 1. Erreurs réseau évidentes
+    // 1. Obvious network errors
     if (error is SocketException) {
       return SyncErrorType.network;
     }
@@ -43,7 +43,7 @@ class SyncErrorClassifier {
       return SyncErrorType.network;
     }
 
-    // 2. Timeout = réseau
+    // 2. Timeout = network
     if (error is TimeoutException) {
       return SyncErrorType.network;
     }
@@ -53,35 +53,35 @@ class SyncErrorClassifier {
       return _classifyPostgrestException(error);
     }
 
-    // 4. Analyse du message d'erreur
+    // 4. Error message analysis
     final errorMessage = error.toString().toLowerCase();
 
-    // Patterns d'erreurs réseau
+    // Network error patterns
     if (_isNetworkErrorMessage(errorMessage)) {
       return SyncErrorType.network;
     }
 
-    // 5. Par défaut, considérer comme erreur applicative
-    // (plus sûr d'avoir un faux positif applicatif que de bloquer indéfiniment)
+    // 5. By default, consider as application error
+    // (safer to have a false positive application error than to block indefinitely)
     return SyncErrorType.application;
   }
 
-  /// Classifie une exception Supabase/Postgrest
+  /// Classifies a Supabase/Postgrest exception
   static SyncErrorType _classifyPostgrestException(PostgrestException error) {
     final code = error.code;
     final message = error.message.toLowerCase();
 
-    // Status codes réseau
+    // Network status codes
     if (code == '502' || code == '503' || code == '504') {
       return SyncErrorType.network;
     }
 
-    // Status codes applicatifs
+    // Application status codes
     if (code == '400' || code == '422' || code == '401' || code == '403') {
       return SyncErrorType.application;
     }
 
-    // Analyse du message pour 500
+    // Message analysis for 500
     if (code == '500') {
       if (_isNetworkErrorMessage(message)) {
         return SyncErrorType.network;
@@ -89,16 +89,16 @@ class SyncErrorClassifier {
       return SyncErrorType.application;
     }
 
-    // Messages spécifiques réseau
+    // Specific network messages
     if (_isNetworkErrorMessage(message)) {
       return SyncErrorType.network;
     }
 
-    // Par défaut pour erreurs Postgrest : applicatif
+    // Default for Postgrest errors: application
     return SyncErrorType.application;
   }
 
-  /// Détecte si un message d'erreur indique un problème réseau
+  /// Detects if an error message indicates a network problem
   static bool _isNetworkErrorMessage(String message) {
     final networkPatterns = [
       'network',
@@ -133,30 +133,30 @@ class SyncErrorClassifier {
     return false;
   }
 
-  /// Obtient un message d'erreur lisible pour l'utilisateur
+  /// Gets a user-readable error message
   static String getUserFriendlyMessage(Object error, SyncErrorType type) {
     if (type == SyncErrorType.network) {
-      return 'Problème de connexion réseau. La synchronisation reprendra automatiquement.';
+      return 'Network connection problem. Synchronization will resume automatically.';
     }
 
-    // Erreur applicative
+    // Application error
     if (error is PostgrestException) {
       switch (error.code) {
         case '400':
         case '422':
-          return "Données invalides. Veuillez vérifier vos modifications.";
+          return 'Invalid data. Please verify your changes.';
         case '401':
         case '403':
-          return "Accès refusé. Vérifiez vos permissions.";
+          return 'Access denied. Check your permissions.';
         default:
-          return 'Erreur lors de la synchronisation. L\'administrateur a été notifié.';
+          return 'Synchronization error. The administrator has been notified.';
       }
     }
 
-    return 'Erreur lors de la synchronisation. L\'administrateur a été notifié.';
+    return 'Synchronization error. The administrator has been notified.';
   }
 
-  /// Obtient un message technique pour les logs
+  /// Gets a technical message for logs
   static String getTechnicalMessage(Object error, StackTrace? stackTrace) {
     final buffer = StringBuffer();
 
