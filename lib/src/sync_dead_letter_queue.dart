@@ -88,6 +88,72 @@ class SyncDeadLetterQueue {
       return 0;
     }
   }
+
+  /// Retrieves a failed item's JSON data for retry.
+  ///
+  /// ⚠️ IMPORTANT: Does NOT remove the item from DLQ.
+  /// The caller (SyncService) must call deleteItem() after successful retry
+  /// to avoid losing data if the retry fails.
+  ///
+  /// Returns the parsed item data to be re-queued by the caller.
+  Future<Map<String, dynamic>?> retryItem(String itemId) async {
+    try {
+      // Retrieve item without deleting it
+      final result = await _database.customSelect('''
+        SELECT item_json FROM sync_dead_letter_queue_table WHERE id = ?
+      ''', variables: [Variable.withString(itemId)]).getSingleOrNull();
+
+      if (result == null) {
+        _logger.warning('DLQ item not found for retry: $itemId');
+        return null;
+      }
+
+      final itemJson = jsonDecode(result.read<String>('item_json')) as Map<String, dynamic>;
+
+      _logger.info('Retrieved DLQ item for retry: $itemId');
+      return itemJson;
+    } catch (e, s) {
+      _logger.severe('Failed to retrieve DLQ item for retry: $e\n$s');
+      return null;
+    }
+  }
+
+  /// Marks an item as ignored (status = 'ignored').
+  /// The item stays in DLQ but won't be shown in pending list.
+  Future<bool> ignoreItem(String itemId) async {
+    try {
+      await _database.customUpdate(
+        'UPDATE sync_dead_letter_queue_table SET status = ? WHERE id = ?',
+        variables: [
+          Variable.withString('ignored'),
+          Variable.withString(itemId),
+        ],
+      );
+
+      _logger.info('Ignored DLQ item: $itemId');
+      return true;
+    } catch (e, s) {
+      _logger.severe('Failed to ignore DLQ item: $e\n$s');
+      return false;
+    }
+  }
+
+  /// Permanently deletes an item from DLQ.
+  /// Use this when the error is understood and the item should be discarded.
+  Future<bool> deleteItem(String itemId) async {
+    try {
+      await _database.customStatement(
+        'DELETE FROM sync_dead_letter_queue_table WHERE id = ?',
+        [itemId], // customStatement expects raw values, not Variable<T>
+      );
+
+      _logger.info('Deleted DLQ item: $itemId');
+      return true;
+    } catch (e, s) {
+      _logger.severe('Failed to delete DLQ item: $e\n$s');
+      return false;
+    }
+  }
 }
 
 /// Represents an item in the dead letter queue.
