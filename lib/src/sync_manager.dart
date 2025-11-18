@@ -15,6 +15,30 @@ import 'package:syncable/src/syncable.dart';
 import 'package:syncable/src/syncable_database.dart';
 import 'package:syncable/src/syncable_table.dart';
 
+// ============= SYNC CONFIGURATION CONSTANTS =============
+
+/// Interval at which to perform a safety re-sync from Drift database.
+/// Every N loop iterations, all tables are re-fetched from local Drift DB
+/// to capture any items that might have been lost from RAM.
+const int _DRIFT_RESYNC_INTERVAL = 20;
+
+/// Interval at which to cleanup error queues to prevent memory leaks.
+/// Every N loop iterations, error queues are cleared (errors already persisted in DLQ).
+const int _ERROR_QUEUE_CLEANUP_INTERVAL = 100;
+
+/// Number of consecutive network errors before opening the circuit breaker.
+/// After this many network failures, the circuit breaker opens and pauses sync.
+const int _CIRCUIT_BREAKER_THRESHOLD = 5;
+
+/// Duration after which the circuit breaker auto-resets.
+/// After this cooldown period, sync attempts resume.
+const Duration _CIRCUIT_BREAKER_COOLDOWN = Duration(minutes: 2);
+
+/// Maximum number of retry attempts before moving an item to the Dead Letter Queue.
+/// For application errors: item fails after this many attempts (0, 1, 2 = 3 total).
+/// For network errors: retries continue indefinitely (this doesn't apply).
+const int _MAX_RETRY_ATTEMPTS = 2; // 0, 1, 2 = 3 total attempts
+
 /// Callback pour notifier les erreurs persistées dans la Dead Letter Queue.
 ///
 /// Permet au code appelant (ex: SyncService) d'envoyer ces erreurs vers
@@ -416,6 +440,58 @@ class SyncManager<T extends SyncableDatabase> extends ChangeNotifier {
 
   int _nFullSyncs = 0;
   int get nFullSyncs => _nFullSyncs;
+
+  /// Provides access to the Dead Letter Queue for viewing/managing sync errors.
+  /// Returns null if sync is not enabled yet.
+  SyncDeadLetterQueue? get deadLetterQueue => _deadLetterQueue;
+
+  /// Returns a map of syncable types to their backend table names.
+  /// Useful for displaying table names in the UI.
+  Map<Type, String> get backendTableNames => Map.unmodifiable(_backendTables);
+
+  /// Returns a map of syncable types to their local table info.
+  /// Useful for getting detailed table metadata.
+  Map<Type, TableInfo<SyncableTable, Syncable>> get localTables =>
+      Map.unmodifiable(_localTables);
+
+  /// Returns the count of items waiting to be uploaded for each syncable type.
+  /// Key: Syncable type, Value: Number of pending items
+  Map<Type, int> get uploadQueueSizes {
+    final result = <Type, int>{};
+    for (final type in _syncables) {
+      result[type] = _outQueues[type]?.length ?? 0;
+    }
+    return result;
+  }
+
+  /// Returns the count of items in error state for each syncable type.
+  /// Key: Syncable type, Value: Number of items in error
+  Map<Type, int> get errorQueueSizes {
+    final result = <Type, int>{};
+    for (final type in _syncables) {
+      result[type] = _errorQueues[type]?.length ?? 0;
+    }
+    return result;
+  }
+
+  /// Returns the circuit breaker state for each syncable type.
+  /// Circuit breakers open after 5 consecutive network errors and close after 2 minutes.
+  Map<Type, CircuitBreakerState> get circuitBreakers =>
+      Map.unmodifiable(_circuitBreakers);
+
+  /// Returns whether each syncable type has an active realtime subscription.
+  Map<Type, bool> get hasActiveRealtimeSubscription {
+    final result = <Type, bool>{};
+    for (final type in _syncables) {
+      final tableName = _backendTables[type];
+      if (tableName != null) {
+        result[type] = _backendSubscriptions.containsKey(tableName);
+      } else {
+        result[type] = false;
+      }
+    }
+    return result;
+  }
 
   @override
   void dispose() {
