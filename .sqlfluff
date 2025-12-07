@@ -1,6 +1,9 @@
 [sqlfluff]
 dialect=postgres
 
+# RF04: Allow keywords as column names
+exclude_rules = RF04
+
 [sqlfluff:rules:capitalisation.keywords]
 capitalisation_policy = lower
 [sqlfluff:rules:capitalisation.identifiers]
