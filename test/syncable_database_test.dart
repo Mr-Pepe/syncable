@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:drift/drift.dart' as drift;
 import 'package:drift/native.dart' as drift_native;
-import 'package:test/test.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:uuid/uuid.dart';
 
 import 'utils/test_database.dart';
