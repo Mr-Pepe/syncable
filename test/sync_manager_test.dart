@@ -49,20 +49,20 @@ void main() {
     mockQueryBuilder = MockSupabaseQueryBuilder();
     mockHttpClient = MockClient();
 
+    final realQueryBuilder = PostgrestQueryBuilder(
+      url: Uri(),
+      httpClient: mockHttpClient,
+    );
+
     when(
       mockSupabaseClient.from(itemsTable),
     ).thenAnswer((_) => mockQueryBuilder);
     when(
       mockQueryBuilder.upsert(any, onConflict: anyNamed('onConflict')),
     ).thenAnswer(
-      (_) => PostgrestFilterBuilder(
-        PostgrestBuilder(
-          url: Uri(),
-          // ignore: prefer_const_literals_to_create_immutables
-          headers: {},
-          method: 'POST',
-          httpClient: mockHttpClient,
-        ),
+      (inv) => realQueryBuilder.upsert(
+        inv.positionalArguments[0] as Object,
+        onConflict: inv.namedArguments[#onConflict] as String?,
       ),
     );
     when(
@@ -81,15 +81,7 @@ void main() {
       ),
     );
     when(mockQueryBuilder.select(any)).thenAnswer(
-      (_) => PostgrestFilterBuilder(
-        PostgrestBuilder(
-          url: Uri(),
-          // ignore: prefer_const_literals_to_create_immutables
-          headers: {},
-          method: 'GET',
-          httpClient: mockHttpClient,
-        ),
-      ),
+      (inv) => realQueryBuilder.select(inv.positionalArguments[0] as String),
     );
     when(mockHttpClient.get(any, headers: anyNamed('headers'))).thenAnswer(
       (_) async =>
