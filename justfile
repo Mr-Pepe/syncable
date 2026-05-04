@@ -19,7 +19,7 @@ generate-test-entrypoints:
 # Runs all tests (with coverage)
 test: generate-test-entrypoints start-supabase
   supabase db test
-  dart test test/_test.dart --test-randomize-ordering-seed=random --coverage coverage
+  flutter test test/_test.dart --test-randomize-ordering-seed=random --coverage coverage
   dart run coverage:format_coverage --lcov --report-on lib --check-ignore -i coverage/test/_test.dart.vm.json -o coverage/lcov.info
 
 # Start Supabase for local development or testing
