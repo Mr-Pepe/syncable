@@ -28,6 +28,7 @@ import 'package:supabase/supabase.dart' as _i2;
 // ignore_for_file: unnecessary_parenthesis
 // ignore_for_file: camel_case_types
 // ignore_for_file: subtype_of_sealed_class
+// ignore_for_file: invalid_use_of_internal_member
 
 class _FakeFunctionsClient_0 extends _i1.SmartFake
     implements _i2.FunctionsClient {
@@ -215,32 +216,32 @@ class MockSupabaseClient extends _i1.Mock implements _i2.SupabaseClient {
           as _i2.GoTrueClient);
 
   @override
-  set functions(_i2.FunctionsClient? _functions) => super.noSuchMethod(
-    Invocation.setter(#functions, _functions),
+  set functions(_i2.FunctionsClient? value) => super.noSuchMethod(
+    Invocation.setter(#functions, value),
     returnValueForMissingStub: null,
   );
 
   @override
-  set storage(_i2.SupabaseStorageClient? _storage) => super.noSuchMethod(
-    Invocation.setter(#storage, _storage),
+  set storage(_i2.SupabaseStorageClient? value) => super.noSuchMethod(
+    Invocation.setter(#storage, value),
     returnValueForMissingStub: null,
   );
 
   @override
-  set realtime(_i2.RealtimeClient? _realtime) => super.noSuchMethod(
-    Invocation.setter(#realtime, _realtime),
+  set realtime(_i2.RealtimeClient? value) => super.noSuchMethod(
+    Invocation.setter(#realtime, value),
     returnValueForMissingStub: null,
   );
 
   @override
-  set rest(_i2.PostgrestClient? _rest) => super.noSuchMethod(
-    Invocation.setter(#rest, _rest),
+  set rest(_i2.PostgrestClient? value) => super.noSuchMethod(
+    Invocation.setter(#rest, value),
     returnValueForMissingStub: null,
   );
 
   @override
-  set headers(Map<String, String>? headers) => super.noSuchMethod(
-    Invocation.setter(#headers, headers),
+  set headers(Map<String, String>? newHeaders) => super.noSuchMethod(
+    Invocation.setter(#headers, newHeaders),
     returnValueForMissingStub: null,
   );
 
@@ -366,16 +367,28 @@ class MockSupabaseClient extends _i1.Mock implements _i2.SupabaseClient {
 class MockSupabaseQueryBuilder extends _i1.Mock
     implements _i2.SupabaseQueryBuilder {
   @override
-  _i2.SupabaseStreamFilterBuilder stream({required List<String>? primaryKey}) =>
+  _i2.SupabaseStreamFilterBuilder stream({
+    required List<String>? primaryKey,
+    bool? private = false,
+  }) =>
       (super.noSuchMethod(
-            Invocation.method(#stream, [], {#primaryKey: primaryKey}),
+            Invocation.method(#stream, [], {
+              #primaryKey: primaryKey,
+              #private: private,
+            }),
             returnValue: _FakeSupabaseStreamFilterBuilder_9(
               this,
-              Invocation.method(#stream, [], {#primaryKey: primaryKey}),
+              Invocation.method(#stream, [], {
+                #primaryKey: primaryKey,
+                #private: private,
+              }),
             ),
             returnValueForMissingStub: _FakeSupabaseStreamFilterBuilder_9(
               this,
-              Invocation.method(#stream, [], {#primaryKey: primaryKey}),
+              Invocation.method(#stream, [], {
+                #primaryKey: primaryKey,
+                #private: private,
+              }),
             ),
           )
           as _i2.SupabaseStreamFilterBuilder);
@@ -521,6 +534,21 @@ class MockSupabaseQueryBuilder extends _i1.Mock
           as _i2.PostgrestFilterBuilder<int>);
 
   @override
+  _i2.PostgrestQueryBuilder<dynamic> retry({required bool? enabled}) =>
+      (super.noSuchMethod(
+            Invocation.method(#retry, [], {#enabled: enabled}),
+            returnValue: _FakePostgrestQueryBuilder_10<dynamic>(
+              this,
+              Invocation.method(#retry, [], {#enabled: enabled}),
+            ),
+            returnValueForMissingStub: _FakePostgrestQueryBuilder_10<dynamic>(
+              this,
+              Invocation.method(#retry, [], {#enabled: enabled}),
+            ),
+          )
+          as _i2.PostgrestQueryBuilder<dynamic>);
+
+  @override
   _i2.PostgrestQueryBuilder<dynamic> setHeader(String? key, String? value) =>
       (super.noSuchMethod(
             Invocation.method(#setHeader, [key, value]),
@@ -568,16 +596,16 @@ class MockSupabaseQueryBuilder extends _i1.Mock
           as Uri);
 
   @override
-  Uri overrideSearchParams(String? key, String? value) =>
+  Uri overrideSearchParams(String? key, String? value, [Uri? url]) =>
       (super.noSuchMethod(
-            Invocation.method(#overrideSearchParams, [key, value]),
+            Invocation.method(#overrideSearchParams, [key, value, url]),
             returnValue: _FakeUri_12(
               this,
-              Invocation.method(#overrideSearchParams, [key, value]),
+              Invocation.method(#overrideSearchParams, [key, value, url]),
             ),
             returnValueForMissingStub: _FakeUri_12(
               this,
-              Invocation.method(#overrideSearchParams, [key, value]),
+              Invocation.method(#overrideSearchParams, [key, value, url]),
             ),
           )
           as Uri);
@@ -838,32 +866,32 @@ class MockRealtimeChannel extends _i1.Mock implements _i2.RealtimeChannel {
           as bool);
 
   @override
-  set joinedOnce(bool? _joinedOnce) => super.noSuchMethod(
-    Invocation.setter(#joinedOnce, _joinedOnce),
+  set joinedOnce(bool? value) => super.noSuchMethod(
+    Invocation.setter(#joinedOnce, value),
     returnValueForMissingStub: null,
   );
 
   @override
-  set joinPush(_i4.Push? _joinPush) => super.noSuchMethod(
-    Invocation.setter(#joinPush, _joinPush),
+  set joinPush(_i4.Push? value) => super.noSuchMethod(
+    Invocation.setter(#joinPush, value),
     returnValueForMissingStub: null,
   );
 
   @override
-  set presence(_i2.RealtimePresence? _presence) => super.noSuchMethod(
-    Invocation.setter(#presence, _presence),
+  set presence(_i2.RealtimePresence? value) => super.noSuchMethod(
+    Invocation.setter(#presence, value),
     returnValueForMissingStub: null,
   );
 
   @override
-  set broadcastEndpointURL(String? _broadcastEndpointURL) => super.noSuchMethod(
-    Invocation.setter(#broadcastEndpointURL, _broadcastEndpointURL),
+  set broadcastEndpointURL(String? value) => super.noSuchMethod(
+    Invocation.setter(#broadcastEndpointURL, value),
     returnValueForMissingStub: null,
   );
 
   @override
-  set params(Map<String, dynamic>? _params) => super.noSuchMethod(
-    Invocation.setter(#params, _params),
+  set params(Map<String, dynamic>? value) => super.noSuchMethod(
+    Invocation.setter(#params, value),
     returnValueForMissingStub: null,
   );
 
@@ -1117,6 +1145,23 @@ class MockRealtimeChannel extends _i1.Mock implements _i2.RealtimeChannel {
           as _i4.Push);
 
   @override
+  _i3.Future<void> httpSend({
+    required String? event,
+    required Object? payload,
+    Duration? timeout,
+  }) =>
+      (super.noSuchMethod(
+            Invocation.method(#httpSend, [], {
+              #event: event,
+              #payload: payload,
+              #timeout: timeout,
+            }),
+            returnValue: _i3.Future<void>.value(),
+            returnValueForMissingStub: _i3.Future<void>.value(),
+          )
+          as _i3.Future<void>);
+
+  @override
   _i3.Future<_i2.ChannelResponse> sendBroadcastMessage({
     required String? event,
     required Map<String, dynamic>? payload,
@@ -1191,9 +1236,9 @@ class MockRealtimeChannel extends _i1.Mock implements _i2.RealtimeChannel {
       );
 
   @override
-  bool isMember(String? topic) =>
+  bool isMember(String? otherTopic) =>
       (super.noSuchMethod(
-            Invocation.method(#isMember, [topic]),
+            Invocation.method(#isMember, [otherTopic]),
             returnValue: false,
             returnValueForMissingStub: false,
           )
