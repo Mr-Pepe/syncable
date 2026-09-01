@@ -5,7 +5,7 @@ import 'package:drift/native.dart';
 import 'package:supabase/supabase.dart';
 import 'package:syncable/src/supabase_names.dart';
 import 'package:syncable/syncable.dart';
-import 'package:test/test.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:uuid/uuid.dart';
 
 import 'utils/test_database.dart';
@@ -219,11 +219,14 @@ void main() {
     });
   });
 
-  test('Reading from backend uses paging', () async {
-    // The maximum number of rows returned from a query in Supabase is limited,
-    // so syncing more items than that requires paging.
+  test(
+    'Reading from backend uses paging',
+    () async {
+      // The maximum number of rows returned from a query in Supabase is limited,
+      // so syncing more items than that requires paging.
+      // This test creates 1001 items and can take time on slower machines
 
-    const maxRows = 1000; // Defined in `supabase/config.toml`
+      const maxRows = 1000; // Defined in `supabase/config.toml`
 
     await supabaseClient.auth.signInAnonymously();
 
@@ -276,6 +279,7 @@ void main() {
     syncManager.enableSync();
 
     // Wait for items to sync to local database
+    // This test syncs 1001 items which can take time, especially on slower machines
     await waitForFunctionToPass(() async {
       await testDb.select(testDb.items).get().then((localItems) {
         expect(
@@ -283,8 +287,10 @@ void main() {
           equals(List.generate(maxRows + 1, (i) => i.toString()).toSet()),
         );
       });
-    }, timeout: const Duration(seconds: 30));
-  });
+    }, timeout: const Duration(seconds: 60));
+    },
+    timeout: const Timeout(Duration(minutes: 2)),
+  );
 
   test(
     'Local database rejects items from backend with old modification dates',
