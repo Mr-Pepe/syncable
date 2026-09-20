@@ -6,7 +6,7 @@ get-dependencies:
   dart pub get
 
 # Analyze the project
-lint:
+lint: generate-code
   dart format --set-exit-if-changed .
   dart analyze .
   sqlfluff lint
