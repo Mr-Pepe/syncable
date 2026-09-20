@@ -9,7 +9,7 @@ get-dependencies:
 lint: generate-code
   dart format --set-exit-if-changed .
   dart analyze .
-  sqlfluff lint
+  uvx sqlfluff lint
 
 # Generate test entrypoint
 generate-test-entrypoints:

@@ -16,7 +16,9 @@ jobs:
 
       - uses: dart-lang/setup-dart@v1
 
-      - run: sudo snap install --edge --classic just
+      - uses: astral-sh/setup-uv@v10
+
+      - run: uv tool install rust-just
 
       - run: just get-dependencies
 

@@ -21,17 +21,15 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dart-lang/setup-dart@v1
 
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v10
 
-      - uses: supabase/setup-cli@v1
+      - uses: supabase/setup-cli@v3
 
-      - run: sudo snap install --edge --classic just
-
-      - run: pip install sqlfluff
+      - run: uv tool install rust-just
 
       - run: just get-dependencies
 
