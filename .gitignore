@@ -11,6 +11,7 @@ coverage/
 doc/
 build/
 test/_test.dart
+test/utils/test_mocks.mocks.dart
 
 test_database.sqlite
 _CHANGELOG.md

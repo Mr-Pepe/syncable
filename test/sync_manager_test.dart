@@ -83,10 +83,14 @@ void main() {
     when(mockQueryBuilder.select(any)).thenAnswer(
       (inv) => realQueryBuilder.select(inv.positionalArguments[0] as String),
     );
-    when(mockHttpClient.get(any, headers: anyNamed('headers'))).thenAnswer(
-      (_) async =>
-          Response(jsonEncode([]), 200, request: Request('GET', Uri())),
-    );
+    when(mockHttpClient.send(any)).thenAnswer((invocation) async {
+      final request = invocation.positionalArguments[0] as BaseRequest;
+      return StreamedResponse(
+        Stream.fromIterable([utf8.encode(jsonEncode([]))]),
+        200,
+        request: request,
+      );
+    });
 
     // Set up mocks for Supabase to allow listening to changes in the database
     final mockRealtimeChannel = MockRealtimeChannel();
@@ -293,13 +297,15 @@ void main() {
         name: 'Backend item 1',
       );
 
-      when(mockHttpClient.get(any, headers: anyNamed('headers'))).thenAnswer(
-        (_) async => Response(
-          jsonEncode([backendItem1.toJson()]),
+      when(mockHttpClient.send(any)).thenAnswer((invocation) async {
+        final request = invocation.positionalArguments.single as BaseRequest;
+
+        return StreamedResponse(
+          Stream.value(utf8.encode(jsonEncode([backendItem1.toJson()]))),
           200,
-          request: Request('GET', Uri()),
-        ),
-      );
+          request: request,
+        );
+      });
 
       await waitForFunctionToPass(() async {
         expect(syncManager.nFullSyncs, 1);
@@ -321,13 +327,19 @@ void main() {
         name: 'Backend item 2',
       );
 
-      when(mockHttpClient.get(any, headers: anyNamed('headers'))).thenAnswer(
-        (_) async => Response(
-          jsonEncode([backendItem1.toJson(), backendItem2.toJson()]),
+      when(mockHttpClient.send(any)).thenAnswer((invocation) async {
+        final request = invocation.positionalArguments.single as BaseRequest;
+
+        return StreamedResponse(
+          Stream.value(
+            utf8.encode(
+              jsonEncode([backendItem1.toJson(), backendItem2.toJson()]),
+            ),
+          ),
           200,
-          request: Request('GET', Uri()),
-        ),
-      );
+          request: request,
+        );
+      });
 
       // Setting a timestamp far in the past for the last time a device was active
       // must prevent a new sync
@@ -376,13 +388,15 @@ void main() {
       name: 'Backend item 1',
     );
 
-    when(mockHttpClient.get(any, headers: anyNamed('headers'))).thenAnswer(
-      (_) async => Response(
-        jsonEncode([backendItem1.toJson()]),
+    when(mockHttpClient.send(any)).thenAnswer((invocation) async {
+      final request = invocation.positionalArguments.single as BaseRequest;
+
+      return StreamedResponse(
+        Stream.value(utf8.encode(jsonEncode([backendItem1.toJson()]))),
         200,
-        request: Request('GET', Uri()),
-      ),
-    );
+        request: request,
+      );
+    });
 
     syncManager.enableSync();
 
