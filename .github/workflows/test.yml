@@ -25,7 +25,7 @@ jobs:
 
       - uses: dart-lang/setup-dart@v1
 
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv
 
       - uses: supabase/setup-cli@v3
 

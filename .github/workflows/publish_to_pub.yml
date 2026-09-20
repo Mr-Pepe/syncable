@@ -16,7 +16,7 @@ jobs:
 
       - uses: dart-lang/setup-dart@v1
 
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv
 
       - run: uv tool install rust-just
 
